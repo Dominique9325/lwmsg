@@ -1,0 +1,11 @@
+CompileFlags:
+  Add:
+    - -nostdinc
+    - -isystem
+    - /usr/lib/llvm-18/lib/clang/18/include
+    - -isystem
+    - /usr/local/include
+    - -isystem
+    - /usr/include/x86_64-linux-gnu
+    - -isystem
+    - /usr/include

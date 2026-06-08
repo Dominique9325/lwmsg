@@ -13,7 +13,14 @@ add_executable(lwmsg-server server/server.c
         server/servctrl.c
         server/servctrl.h
         common/netwrap.c
-        common/netwrap.h)
+        common/netwrap.h
+        server/clhandle.c
+        server/clhandle.c
+        server/clhandle.h
+        server/htable.c
+        server/htable.h
+        server/misc.c
+        server/misc.h)
 add_executable(lwmsg-client client/client.c
         common/netwrap.c
         common/netwrap.h)
