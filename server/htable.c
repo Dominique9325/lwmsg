@@ -17,7 +17,6 @@
 
 #define FNV1A_32_PRIME 0x01000193U
 #define FNV1A_32_OFFSET_BASIS 0x811C9DC5
-#define LDFAC(el_count, buckets) ((uint8_t)(((double)(el_count) / (buckets)) * 100))
 
 uint32_t fnv1a_32_hash(const unsigned char* input, uint32_t size)
 {
@@ -94,26 +93,42 @@ static void htable_resize(striped_htable* htable)
 {
     uint64_t old_bucket_count = htable->bucket_count;
     htable->bucket_count <<= htable->htable_pow2_expansion_factor;
+    
     node** temp = realloc(htable->buckets, htable->bucket_count);
-
     if (!temp)
         return;
     htable->buckets = temp;
+    memset(&htable->buckets[old_bucket_count], 0, (htable->bucket_count - old_bucket_count) * sizeof(node*));
+
 
     node* current = NULL;
-    for (uint64_t i = 0; i < old_bucket_count; i++)
+
+    for (uint64_t src_bucket_index = 0; src_bucket_index < old_bucket_count; src_bucket_index++)
     {
-        current = htable->buckets[i];
+        node** src_bucket = &htable->buckets[src_bucket_index];
+        current = *src_bucket;
+
         while (current != NULL)
         {
-            uint64_t bucket_index = fnv1a_32_hash((unsigned char*)current->key, current->key_size) & (htable->bucket_count - 1);
-            node** target_bucket = &htable->buckets[bucket_index];
-            if (!(*target_bucket))
+            uint64_t dest_bucket_index = fnv1a_32_hash((unsigned char*)current->key, current->key_size) & (htable->bucket_count - 1);
+            if (src_bucket_index == dest_bucket_index)
+                continue;
+
+            node** dest_bucket = &htable->buckets[dest_bucket_index];
+            
+            if (!(*dest_bucket))
             {
-                *target_bucket = current;
+                *dest_bucket = current;
+                *src_bucket = current->next;
+                current->next = NULL;
                 break;
             }
-            
+
+            do
+            {
+
+            }while (*dest_bucket);
+
 
         }
 

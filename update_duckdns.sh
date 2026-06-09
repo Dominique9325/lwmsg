@@ -14,6 +14,6 @@ RESPONSE=$(curl -s "https://www.duckdns.org/update?domains=${DOMAIN}&token=${TOK
 if [[ "$RESPONSE" == "OK" ]]; then
     echo "$(date +"%Y-%m-%dT%H:%M:%SZ") [OK] Updated ${DOMAIN}.duckdns.org" &>> ${LOG_DIR}/ddns_log
 else
-    echo "$(date +"%Y-%m-%dT%H:%M:%SZ") [ERROR] Update failed: ${RESPONSE}" &>> ${LOG_DIR}/ddns_log
+    echo "$(date +"%Y-%m-%dT%H:%M:%SZ") [ERROR] Update failed" &>> ${LOG_DIR}/ddns_log
     exit 1
 fi

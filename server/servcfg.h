@@ -22,22 +22,23 @@
 typedef char path[CFG_MAX_STRLEN];
 
 #define CFG_INT_FIELDS(X) \
-X(ATOMIC uint64_t,         max_filesize_b,               200,              UINT64_MAX,  1U << 22) \
-X(uint8_t,                 nr_worker_threads,            1,                128,         4       ) \
-X(uint8_t,                 cl_htable_size_pow2_exp,      1,                21,          8       ) \
-X(uint8_t,                 cl_htable_ldfactor_exp_thres, 1,                UINT8_MAX,   70      ) \
-X(uint8_t,                 cl_htable_locks_pow2,         1,                32,          16      ) \
-X(ATOMIC uint16_t,         pop_cap,                      0,                UINT16_MAX,  20      ) \
-X(uint16_t,                reg_port,                     6500,             7000,        6671    ) \
-X(uint16_t,                gen_port,                     7001,             UINT16_MAX,  7228    ) \
-X(uint16_t,                ctrl_port,                    MIN_NONPRIV_PORT, UINT16_MAX,  6777    ) \
-X(uint8_t,                 autoconf_nr_threads,          false,            true,        false   ) \
-X(uint8_t,                 use_tls,                      false,            true,        true    ) \
-X(uint8_t,                 use_auth,                     false,            true,        true    ) \
-X(ATOMIC uint8_t,          allow_regisrations,           false,            true,        true    ) \
-X(ATOMIC uint8_t,          allow_file_transfers,         false,            true,        true    ) \
-X(ATOMIC uint8_t,          use_ip_whitelist,             false,            true,        false   )
-// type                     var name                     min value        max value     default value
+X(ATOMIC uint64_t,         max_filesize_b,                  200,              UINT64_MAX,  1U << 22) \
+X(uint8_t,                 nr_worker_threads,               1,                128,         4       ) \
+X(uint8_t,                 cl_htable_size_pow2,             1,                21,          8       ) \
+X(uint8_t,                 cl_htable_expansion_pow2_factor, 1,                12,          8       ) \
+X(uint8_t,                 cl_htable_loadfactor_exp_thres,  1,                UINT8_MAX,   70      ) \
+X(uint8_t,                 cl_htable_locks_pow2,            1,                32,          16      ) \
+X(ATOMIC uint16_t,         pop_cap,                         0,                UINT16_MAX,  20      ) \
+X(uint16_t,                reg_port,                        6500,             7000,        6671    ) \
+X(uint16_t,                gen_port,                        7001,             UINT16_MAX,  7228    ) \
+X(uint16_t,                ctrl_port,                       MIN_NONPRIV_PORT, UINT16_MAX,  6777    ) \
+X(uint8_t,                 autoconf_nr_threads,             false,            true,        false   ) \
+X(uint8_t,                 use_tls,                         false,            true,        true    ) \
+X(uint8_t,                 use_auth,                        false,            true,        true    ) \
+X(ATOMIC uint8_t,          allow_regisrations,              false,            true,        true    ) \
+X(ATOMIC uint8_t,          allow_file_transfers,            false,            true,        true    ) \
+X(ATOMIC uint8_t,          use_ip_whitelist,                false,            true,        false   )
+// type                       var name                    min value        max value     default value
 
 #define CFG_STR_FIELDS(X) \
 X(path, cert_chain_path,  0, CFG_MAX_STRLEN, DEFAULT_CERT_CHAIN_PATH   ) \
