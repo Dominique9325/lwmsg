@@ -30,16 +30,17 @@ typedef struct striped_htable
     ATOMIC uint64_t resize_thres_elem_count;
     pthread_rwlock_t g_resize_lock;
     pthread_rwlock_t* locks;
-    ATOMIC uint64_t lock_count;
+    uint64_t lock_count; // doesn't need to be atomic.
     const uint8_t buckets_per_lock_pow2;
     const uint8_t threshold_load_factor;
-    const uint8_t htable_pow2_expansion_factor;
+    const uint8_t htable_pow2_resize_factor;
 }striped_htable;
 
 
 uint32_t fnv1a_32_hash(const unsigned char* input, uint32_t size);
 
-striped_htable* htable_create(uint16_t pow2_size_factor, uint8_t thres_load_factor, uint8_t buckets_per_lock, cmp_func cmpfn);
+striped_htable* htable_create(uint8_t htable_pow2_size_factor, uint8_t htable_pow2_resize_factor,
+                              uint8_t thres_load_factor, uint8_t buckets_per_lock, cmp_func cmpfn);
 
 bool htable_add(striped_htable* htable, node* element);
 

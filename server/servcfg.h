@@ -24,8 +24,8 @@ typedef char path[CFG_MAX_STRLEN];
 #define CFG_INT_FIELDS(X) \
 X(ATOMIC uint64_t,         max_filesize_b,                  200,              UINT64_MAX,  1U << 22) \
 X(uint8_t,                 nr_worker_threads,               1,                128,         4       ) \
-X(uint8_t,                 cl_htable_size_pow2,             1,                21,          8       ) \
-X(uint8_t,                 cl_htable_expansion_pow2_factor, 1,                12,          8       ) \
+X(uint8_t,                 cl_htable_size_pow2,             1,                21,          12      ) \
+X(uint8_t,                 cl_htable_expansion_pow2,        1,                12,          8       ) \
 X(uint8_t,                 cl_htable_loadfactor_exp_thres,  1,                UINT8_MAX,   70      ) \
 X(uint8_t,                 cl_htable_locks_pow2,            1,                32,          16      ) \
 X(ATOMIC uint16_t,         pop_cap,                         0,                UINT16_MAX,  20      ) \
