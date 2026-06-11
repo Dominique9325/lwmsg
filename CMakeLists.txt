@@ -1,8 +1,13 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.14)
 project(lwmsg C)
 
 set(CMAKE_C_STANDARD 11)
-set(LIBS json-c::json-c OpenSSL::SSL OpenSSL::Crypto)
+find_package(json-c REQUIRED)
+find_package(OpenSSL REQUIRED)
+find_package(SQLite3 REQUIRED)
+
+set(COMMON_LIBS json-c::json-c OpenSSL::SSL OpenSSL::Crypto)
+set(SERVER_LIBS ${COMMON_LIBS} SQLite::SQLite3)
 
 
 add_executable(lwmsg-server server/server.c
@@ -15,7 +20,6 @@ add_executable(lwmsg-server server/server.c
         common/netwrap.c
         common/netwrap.h
         server/clhandle.c
-        server/clhandle.c
         server/clhandle.h
         server/htable.c
         server/htable.h
@@ -25,10 +29,8 @@ add_executable(lwmsg-client client/client.c
         common/netwrap.c
         common/netwrap.h)
 
-target_include_directories(lwmsg-server PRIVATE server)
-target_include_directories(lwmsg-client PRIVATE client)
+target_include_directories(lwmsg-server PRIVATE server common)
+target_include_directories(lwmsg-client PRIVATE client common)
 
-find_package(json-c REQUIRED)
-find_package(OpenSSL REQUIRED)
-target_link_libraries(lwmsg-server ${LIBS})
-target_link_libraries(lwmsg-client ${LIBS})
+target_link_libraries(lwmsg-server ${SERVER_LIBS})
+target_link_libraries(lwmsg-client ${COMMON_LIBS})
