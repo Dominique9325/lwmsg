@@ -14,12 +14,13 @@
 
 typedef struct node
 {
-    char* key;
+    const void* key;
     struct node* next;
     uint32_t key_size;
+    ATOMIC uint32_t ref_cnt;
 }node;
 
-typedef int(*cmp_func)(const char* a, const char* b);
+typedef int(*cmp_func)(const void* a, const void* b, uint32_t lena, uint32_t lenb);
 
 typedef struct striped_htable
 {
@@ -36,12 +37,13 @@ typedef struct striped_htable
     const uint8_t htable_pow2_resize_factor;
 }striped_htable;
 
-
-uint32_t fnv1a_32_hash(const unsigned char* input, uint32_t size);
-
 striped_htable* htable_create(uint8_t htable_pow2_size_factor, uint8_t htable_pow2_resize_factor,
                               uint8_t thres_load_factor, uint8_t buckets_per_lock, cmp_func cmpfn);
 
 bool htable_add(striped_htable* htable, node* element);
+
+void htable_remove(striped_htable*, node* element);
+
+node* htable_get(striped_htable* htable, const void* key, uint32_t len);
 
 #endif //LWMSG_HTABLE_H

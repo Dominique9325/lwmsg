@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdbool.h>
 //#include <stddef.h>
+#include <assert.h>
 #include "htable.h"
 
 // #ifdef __clang__
@@ -19,8 +20,9 @@
 #define FNV1A_32_OFFSET_BASIS 0x811C9DC5
 #define C_THRES_ELEM(thres_factor, bucket_count) ((bucket_count) * (thres_factor) / 100)
 
-uint32_t fnv1a_32_hash(const unsigned char* input, uint32_t size)
+static uint32_t fnv1a_32_hash(const unsigned char* input, uint32_t size)
 {
+    assert(input && size);
     uint32_t hash = FNV1A_32_OFFSET_BASIS;
     for (uint32_t i = 0; i < size; i++)
     {
@@ -38,8 +40,14 @@ striped_htable* htable_create(uint8_t htable_pow2_size_factor, uint8_t htable_po
                               uint8_t buckets_per_lock_pow2, cmp_func cmpfn
                               )
 {
-    if (thres_load_factor < 1 || htable_pow2_size_factor < 1)
+    assert(thres_load_factor && buckets_per_lock_pow2 <= htable_pow2_size_factor && htable_pow2_resize_factor &&
+        htable_pow2_resize_factor < 64 && htable_pow2_size_factor < 64 && cmpfn);
+
+#ifdef NDEBUG
+    if (!thres_load_factor || buckets_per_lock_pow2 > htable_pow2_size_factor ||
+        !htable_pow2_resize_factor || htable_pow2_resize_factor >= 64 || htable_pow2_size_factor >= 64 || !cmpfn)
         return NULL;
+#endif
 
     uint64_t bucket_count = 1ULL << htable_pow2_size_factor;
     uint64_t lock_count = bucket_count >> buckets_per_lock_pow2;
@@ -65,16 +73,16 @@ striped_htable* htable_create(uint8_t htable_pow2_size_factor, uint8_t htable_po
     if (!tmp_htable.buckets || !tmp_htable.locks)
         goto fail;
 
-    g_lock = pthread_rwlock_init(&htable->g_resize_lock, NULL) ? false : true;
-    if (!g_lock)
-        goto fail;
-
     htable = (striped_htable*)malloc(sizeof(striped_htable));
     if (!htable)
         goto fail;
 
     memcpy(htable, &tmp_htable, sizeof(striped_htable));
     memset(htable->buckets, 0, bucket_count * sizeof(void*));
+
+    g_lock = pthread_rwlock_init(&htable->g_resize_lock, NULL) ? false : true;
+    if (!g_lock)
+        goto fail;
 
     for (; i < lock_count; i++)
     {
@@ -100,6 +108,8 @@ striped_htable* htable_create(uint8_t htable_pow2_size_factor, uint8_t htable_po
 
 static void htable_resize(striped_htable* htable)
 {
+    assert(htable && htable->buckets && htable->locks);
+
     uint64_t old_bucket_count = htable->bucket_count;
     uint8_t resize_count = 0;
 
@@ -109,6 +119,12 @@ static void htable_resize(striped_htable* htable)
             __atomic_load_n(&htable->resize_thres_elem_count, memory_order_seq_cst))
     {
         htable->bucket_count <<= htable->htable_pow2_resize_factor;
+        if (htable->bucket_count < old_bucket_count)
+        {
+            htable->bucket_count = old_bucket_count;
+            return; // Overflow.
+        }
+
         __atomic_store_n(
                             &htable->resize_thres_elem_count,
                             C_THRES_ELEM(htable->threshold_load_factor, htable->bucket_count), memory_order_seq_cst
@@ -122,28 +138,28 @@ static void htable_resize(striped_htable* htable)
 
     cmp_func cmpfn = htable->cmpfn;
     
-    node** temp = realloc(htable->buckets, htable->bucket_count);
+    node** temp = realloc(htable->buckets, htable->bucket_count * sizeof(node*));
     if (!temp)
         goto bucket_resize_fail;
 
     uint64_t old_lock_count = htable->lock_count;
     htable->lock_count = htable->bucket_count >> htable->buckets_per_lock_pow2;
+    htable->buckets = temp;
 
-    pthread_rwlock_t* lock_temp = realloc(htable->locks, htable->lock_count);
+    pthread_rwlock_t* lock_temp = realloc(htable->locks, htable->lock_count * sizeof(pthread_rwlock_t));
     if (!lock_temp)
         goto lock_resize_fail;
 
+    htable->locks = lock_temp;
     uint64_t i;
     for (i = old_lock_count; i < htable->lock_count; i++)
     {
-        if (pthread_rwlock_init(&lock_temp[i], NULL))
+        if (pthread_rwlock_init(&htable->locks[i], NULL))
             goto lock_init_fail;
     }
 
 
 
-    htable->buckets = temp;
-    htable->locks = lock_temp;
     memset(&htable->buckets[old_bucket_count], 0, (htable->bucket_count - old_bucket_count) * sizeof(node*));
 
 
@@ -155,6 +171,7 @@ static void htable_resize(striped_htable* htable)
 
         while (src != NULL)
         {
+            node* curr_el = src;
             uint64_t dest_bucket_index = fnv1a_32_hash((unsigned char*)src->key, src->key_size) & (htable->bucket_count - 1);
             if (src_bucket_index == dest_bucket_index)
             {
@@ -169,46 +186,56 @@ static void htable_resize(striped_htable* htable)
             
             if (!(*dest_bucket))
             {
-                *dest_bucket = src;
+                *dest_bucket = curr_el;
 
                 if (!src_prev)
-                {
                     *src_bucket = src->next;
-                    src->next = NULL;
-                    continue;
-                }
+                else
+                    src_prev->next = src->next;
 
-                src_prev->next = src->next;
-                src->next = NULL;
+                src = src->next;
+                curr_el->next = NULL;
                 continue;
             }
+
+            node* src_next = src->next;
 
             while (dest)
             {
                 /*They can never be equal because we're simply re-inserting the same set of nodes, duplicates can
                  * never be present in the hashtable.
                  */
-                int32_t res = cmpfn(src->key, dest->key);
-                if (res < 0)
+                int32_t cmp_res = cmpfn(src->key, dest->key, src->key_size, dest->key_size);
+                if (cmp_res < 0 || !dest->next)
                 {
                     if (!src_prev)
                         *src_bucket = src->next;
                     else
                         src_prev->next = src->next;
 
-                    *src_bucket = src->next;
-                    src->next = dest;
+                    if (cmp_res < 0)
+                    {
+                        curr_el->next = dest;
 
-                    if (!dest_prev)
-                        *dest_bucket = src;
+                        if (!dest_prev)
+                            *dest_bucket = curr_el;
+                        else
+                            dest_prev->next = curr_el;
+                    }
                     else
-                        dest_prev->next = src;
+                    {
+                        dest->next = curr_el;
+                        curr_el->next = NULL;
+                    }
+
                     break;
                 }
 
                 dest_prev = dest;
                 dest = dest->next;
             }
+
+            src = src_next;
         }
     }
 
@@ -218,12 +245,18 @@ static void htable_resize(striped_htable* htable)
     for (uint64_t j = old_lock_count; j < i; j++)
         pthread_rwlock_destroy(&htable->locks[j]);
 
+    lock_temp = realloc(htable->locks, old_lock_count * sizeof(pthread_rwlock_t));
+    if (!lock_temp)
+        abort(); // This condition should never be met, if it does then the program simply cannot continue on.
+
+    htable->locks = lock_temp;
+
     lock_resize_fail:
-    temp = realloc(htable->buckets, old_bucket_count);
+    htable->lock_count = old_lock_count;
+    temp = realloc(htable->buckets, old_bucket_count * sizeof(node*));
     if (!temp)
         return;
     htable->buckets = temp;
-    htable->lock_count = old_lock_count;
 
     bucket_resize_fail:
     htable->bucket_count = old_bucket_count;
@@ -237,9 +270,12 @@ static void htable_resize(striped_htable* htable)
 
 bool htable_add(striped_htable* htable, node* element)
 {
-    if (!htable || !htable->buckets || !element)
-        return false;
+    assert(htable && htable->buckets && htable->locks && element);
 
+#ifdef NDEBUG
+    if (!htable || !htable->buckets || htable->locks || !element)
+        return false;
+#endif
 
     if (__atomic_load_n(&htable->element_count, memory_order_seq_cst) >=
         __atomic_load_n(&htable->resize_thres_elem_count, memory_order_seq_cst))
@@ -254,28 +290,36 @@ bool htable_add(striped_htable* htable, node* element)
     if (pthread_rwlock_rdlock(&htable->g_resize_lock))
         return false;
 
+
     cmp_func cmpfn = htable->cmpfn;
     uint64_t bucket_index = fnv1a_32_hash((const unsigned char*)element->key, element->key_size) & (htable->bucket_count - 1);
     uint64_t lock_index = bucket_index >> htable->buckets_per_lock_pow2;
 
     if (pthread_rwlock_wrlock(&htable->locks[lock_index]))
+    {
+        pthread_rwlock_unlock(&htable->g_resize_lock);
         return false;
+    }
+
+    element->next = NULL;
 
     if (!htable->buckets[bucket_index])
     {
         __atomic_fetch_add(&htable->element_count, 1, memory_order_seq_cst);
         htable->buckets[bucket_index] = element;
         pthread_rwlock_unlock(&htable->locks[lock_index]);
+        pthread_rwlock_unlock(&htable->g_resize_lock);
         return true;
     }
 
     node* prev = NULL;
     node* comparator = htable->buckets[bucket_index];
+    int32_t comp_res;
     bool result = false;
 
     do
     {
-        int32_t comp_res = comparator ? cmpfn(element->key, comparator->key) : -1;
+        comp_res = cmpfn(element->key, comparator->key, element->key_size, comparator->key_size);
         if (!comp_res)
             break;
         else if (comp_res < 0)
@@ -301,7 +345,80 @@ bool htable_add(striped_htable* htable, node* element)
 
     } while(comparator);
 
+    if (!result && comp_res)
+    {
+        __atomic_fetch_add(&htable->element_count, 1, memory_order_seq_cst);
+        prev->next = element;
+        element->next = NULL;
+        result = true;
+    }
+
     pthread_rwlock_unlock(&htable->locks[lock_index]);
     pthread_rwlock_unlock(&htable->g_resize_lock);
     return result;
+}
+
+
+
+
+
+void htable_remove(striped_htable* htable, node* element)
+{
+    assert(htable && htable->buckets && htable->locks && element);
+
+    if (pthread_rwlock_rdlock(&htable->g_resize_lock))
+        return;
+
+    uint64_t index = fnv1a_32_hash((const unsigned char*)element->key, element->key_size) & (htable->bucket_count - 1);
+    uint64_t lock_index = index >> htable->buckets_per_lock_pow2;
+
+    if (!htable->buckets[index] || pthread_rwlock_wrlock(&htable->locks[lock_index]))
+    {
+        pthread_rwlock_unlock(&htable->g_resize_lock);
+        return;
+    }
+
+    node** bucket = &htable->buckets[index];
+    node* current = *bucket;
+    node* prev = NULL;
+    cmp_func cmpfn = htable->cmpfn;
+    int32_t cmp_res = 1;
+
+    while (current)
+    {
+        if (!((cmp_res = cmpfn(element->key, current->key, element->key_size, current->key_size))))
+            break;
+        prev = current;
+        current = current->next;
+    }
+
+    if (!current && cmp_res)
+        goto exit;
+    else if (!prev)
+    {
+        *bucket = current->next;
+        element->next = NULL;
+    }
+    else
+    {
+        prev->next = current->next;
+        element->next = NULL;
+    }
+
+    __atomic_sub_fetch(&htable->element_count, 1, memory_order_seq_cst);
+    exit:
+    pthread_rwlock_unlock(&htable->locks[lock_index]);
+    pthread_rwlock_unlock(&htable->g_resize_lock);
+}
+
+node* htable_get(striped_htable* htable, const void* key, uint32_t len)
+{
+    assert(htable && key && len);
+
+    if (pthread_rwlock_rdlock(&htable->g_resize_lock))
+        return NULL;
+
+    uint64_t index = fnv1a_32_hash((const unsigned char*)key, len) & (htable->bucket_count - 1);
+    uint64_t lock_index = index >> htable->buckets_per_lock_pow2;
+
 }
