@@ -7,15 +7,29 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <fcntl.h>
+#include <arpa/inet.h>
+#include <errno.h>
 #include "servcfg.h"
 #include "thrdctx.h"
-#include "../common/netwrap.h"
+#include "netwrap.h"
 
 int main(int argc, char** argv)
 {
     char* cfg_path = getopt(argc, argv, "c:") != -1 ? optarg : "config.json"; // TBR: If I need more CLI args.
     load_cfg(cfg_path);
+    in_addr_t server_main_if = inet_addr(g_server_cfg->gen_interface);
 
+    if (server_main_if == INADDR_NONE)
+    {
+        fprintf(stderr, "Error: '%s' is an invalid interface, shutting down.\n", g_server_cfg->gen_interface);
+        return ERROR;
+    }
+
+    int32_t reg_sock_fd = server_start_tcp(server_main_if, g_server_cfg->reg_port, 128);
+    if (reg_sock_fd == ERROR)
+    {
+        int32_t err = errno;
+    }
     reg_thrd_ctx rt_ctx;
 
     pthread_t reg_thread;

@@ -24,10 +24,16 @@ add_executable(lwmsg-server server/server.c
         server/htable.c
         server/htable.h
         server/misc.c
-        server/misc.h)
+        server/misc.h
+        common/lwmp.c
+        common/lwmp.h
+        server/registration.c
+        server/registration.h)
 add_executable(lwmsg-client client/client.c
         common/netwrap.c
-        common/netwrap.h)
+        common/netwrap.h
+        common/lwmp.c
+        common/lwmp.h)
 
 target_include_directories(lwmsg-server PRIVATE server common)
 target_include_directories(lwmsg-client PRIVATE client common)

@@ -3,7 +3,7 @@
 //
 
 #include "servctrl.h"
-#include "../common/netwrap.h"
+#include "netwrap.h"
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>

@@ -8,6 +8,7 @@
 #include <openssl/ssl.h>
 #include <stdatomic.h>
 #include <netinet/in.h>
+#include "netwrap.h"
 #define TMPBUF_SIZE 2048
 #define UNAMESIZE 32
 
@@ -23,15 +24,7 @@ enum client_state
 
 typedef struct client
 {
-    union
-    {
-        int32_t sock;
-        struct
-        {
-            int32_t sock;
-            SSL* ssl;
-        }with_tls;
-    };
+    conn connection;
     struct sockaddr peer_name;
     uint8_t cl_state;
     char tmpbuf_recv[TMPBUF_SIZE];
