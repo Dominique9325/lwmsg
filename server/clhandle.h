@@ -8,37 +8,51 @@
 #include <openssl/ssl.h>
 #include <stdatomic.h>
 #include <netinet/in.h>
+#include <time.h>
 #include "netwrap.h"
+#include "htable.h"
+
 #define TMPBUF_SIZE 2048
 #define UNAMESIZE 32
+#define DEF_CL_ARR_SIZE 128
 
 enum client_state
 {
-    CONN_OK,
-    TLS_HANDSHAKING,
-    TLS_OK,
-    TLS_FAILED,
-    EXPECTING_DATA,
-    DISCONNECTED
+    ACCEPTING,
+    ACCEPTED,
+    AUTHENTICATING,
+    AUTHENTICATED
 };
+
+typedef struct user
+{
+    node* next;
+    uint8_t thr_id;
+    ATOMIC uint8_t is_disconnected;
+    char username[UNAMESIZE];
+}user;
 
 typedef struct client
 {
     conn connection;
+    user usr;
+    struct timespec auth_deadline;
+    void* tmpbuf_recv;
+    void* tmbuf_send;
+    socklen_t peer_name_size;
     struct sockaddr peer_name;
     uint8_t cl_state;
-    char tmpbuf_recv[TMPBUF_SIZE];
-    char tmbuf_send[TMPBUF_SIZE];
-    char padding[7];
 }client;
 
-typedef struct user
+typedef struct client_arr
 {
-    client* conn_handle;
-    struct user* next;
-    uint8_t thr_id;
-    _Atomic uint8_t is_disconnected;
-    char username[UNAMESIZE];
-}user;
+    client* clients;
+    uint64_t num_clients;
+    uint64_t num_slots;
+}client_arr;
+
+void client_add(client_arr* arr, client* cl);
+
+void client_remove(client_arr* arr, client* cl);
 
 #endif //LWMSG_CLHANDLE_H

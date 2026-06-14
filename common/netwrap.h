@@ -2,8 +2,8 @@
 // Created by gf-senka on 6/7/2026.
 //
 
-#ifndef LWMSG_SOCKETWRAP_H
-#define LWMSG_SOCKETWRAP_H
+#ifndef LWMSG_NETWRAP_H
+#define LWMSG_NETWRAP_H
 #include <stdbool.h>
 #include <stdint.h>
 #include <openssl/ssl.h>
@@ -31,6 +31,6 @@ typedef struct net_fns
     void(*disconnect_fn)(conn* c);
 }net_fns;
 
-int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backlog);
+int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backlog, bool nonblock);
 
-#endif //LWMSG_SOCKETWRAP_H
+#endif //LWMSG_NETWRAP_H

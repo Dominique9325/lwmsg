@@ -7,6 +7,7 @@
 #include <string.h>
 #include <json-c/json_object.h>
 #include <json-c/json.h>
+#include "xalloc.h"
 
 #define STR(X) #X
 #define IS_INTEGRAL(X) (json_object_is_type(X, json_type_int) || json_object_is_type(X, json_type_boolean))
@@ -23,7 +24,7 @@ static serv_cfg get_default_cfg()
 
 void load_cfg(const char* cfg_file)
 {
-    g_server_cfg = (serv_cfg*)malloc(sizeof(serv_cfg));
+    g_server_cfg = (serv_cfg*)xmalloc(sizeof(serv_cfg));
     serv_cfg temp_cfg;
     json_object* cfg_json;
 

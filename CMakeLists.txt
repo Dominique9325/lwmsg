@@ -6,8 +6,10 @@ find_package(json-c REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(SQLite3 REQUIRED)
 
+add_subdirectory(lib/zlog/src)
+
 set(COMMON_LIBS json-c::json-c OpenSSL::SSL OpenSSL::Crypto)
-set(SERVER_LIBS ${COMMON_LIBS} SQLite::SQLite3)
+set(SERVER_LIBS ${COMMON_LIBS} SQLite::SQLite3 zlog)
 
 
 add_executable(lwmsg-server server/server.c
@@ -28,12 +30,20 @@ add_executable(lwmsg-server server/server.c
         common/lwmp.c
         common/lwmp.h
         server/registration.c
-        server/registration.h)
+        server/registration.h
+        server/cltimerheap.c
+        server/cltimerheap.h
+        common/xalloc.c
+        common/xalloc.h
+        server/ipblock.c
+        server/ipblock.h)
 add_executable(lwmsg-client client/client.c
         common/netwrap.c
         common/netwrap.h
         common/lwmp.c
-        common/lwmp.h)
+        common/lwmp.h
+        common/xalloc.c
+        common/xalloc.h)
 
 target_include_directories(lwmsg-server PRIVATE server common)
 target_include_directories(lwmsg-client PRIVATE client common)

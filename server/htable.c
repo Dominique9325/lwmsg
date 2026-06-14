@@ -370,14 +370,14 @@ bool htable_add(striped_htable* htable, node* element)
 
 
 
-void htable_remove(striped_htable* htable, node* element)
+void htable_remove(striped_htable* htable, const void* key, uint32_t key_size)
 {
-    assert(htable && htable->buckets && htable->locks && element);
+    assert(htable && htable->buckets && htable->locks && key && key_size);
 
     if (pthread_rwlock_rdlock(&htable->g_resize_lock))
         return;
 
-    uint64_t index = fnv1a_32_hash((const unsigned char*)element->key, element->key_size) & (htable->bucket_count - 1);
+    uint64_t index = fnv1a_32_hash((const unsigned char*)key, key_size) & (htable->bucket_count - 1);
     uint64_t lock_index = index >> htable->buckets_per_lock_pow2;
 
     if (pthread_rwlock_wrlock(&htable->locks[lock_index]))
@@ -394,7 +394,7 @@ void htable_remove(striped_htable* htable, node* element)
 
     while (current)
     {
-        if (!((cmp_res = cmpfn(element->key, current->key, element->key_size, current->key_size))))
+        if (!((cmp_res = cmpfn(key, current->key, key_size, current->key_size))))
             break;
         prev = current;
         current = current->next;
@@ -405,14 +405,15 @@ void htable_remove(striped_htable* htable, node* element)
     else if (!prev)
     {
         *bucket = current->next;
-        element->next = NULL;
+        current->next = NULL;
     }
     else
     {
         prev->next = current->next;
-        element->next = NULL;
+        current->next = NULL;
     }
 
+    node_put(current);
     __atomic_sub_fetch(&htable->element_count, 1, memory_order_seq_cst);
     exit:
     pthread_rwlock_unlock(&htable->locks[lock_index]);
@@ -422,8 +423,8 @@ void htable_remove(striped_htable* htable, node* element)
 
 
 
-
-node* htable_get(striped_htable* htable, const void* key, uint32_t len)
+// NOTE: Increments ref count for the fetched node.
+node* htable_get(striped_htable* htable, const void* key, uint32_t len, bool ref_inc)
 {
     assert(htable && htable->buckets && htable->locks && key && len);
 
@@ -459,7 +460,8 @@ node* htable_get(striped_htable* htable, const void* key, uint32_t len)
     if (!cmp_res)
     {
         target = seeker;
-        node_get(target);
+        if (ref_inc)
+            node_get(target);
     }
 
     pthread_rwlock_unlock(&htable->locks[lock_index]);
