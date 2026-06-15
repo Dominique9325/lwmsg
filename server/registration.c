@@ -23,12 +23,107 @@
 #define REG_QUERY "INSERT INTO users (username, password_sha256) VALUES (:username, :password_sha256)"
 #define MAX_REVENTS 1024
 
+static void handle_flg_reg_changed(epoll_ctx* p_ec_reg_changed, epoll_ctx* p_ec_listener,
+                                   struct epoll_event* p_ev_listener, int32_t epollfd)
+{
+    eventfd_t temp;
+    read(p_ec_reg_changed->fd, &temp, 8);
+    uint8_t flg_reg = __atomic_load_n(&g_server_cfg->allow_regisrations, memory_order_seq_cst);
+
+    if (flg_reg && p_ec_listener->fd == -1)
+    {
+        p_ec_listener->fd = server_start_tcp(inet_addr(g_server_cfg->gen_interface), g_server_cfg->reg_port, 128, true);
+        p_ev_listener->data.ptr = p_ec_listener;
+        epoll_ctl(epollfd, EPOLL_CTL_ADD, p_ec_listener->fd, p_ev_listener);
+    }
+    else if (!flg_reg && p_ec_listener->fd != -1)
+    {
+        epoll_ctl(epollfd, EPOLL_CTL_DEL, p_ec_listener->fd, NULL);
+        close(p_ec_listener->fd);
+        p_ec_listener->fd = -1;
+    }
+}
+
+static void handle_new_connections(client_list* list, cl_timerheap* clth, reg_thrd_ctx* rt_ctx,
+                                   epoll_ctx* p_ec_listener, int32_t epollfd, net_fns* nfn)
+{
+    while (1)
+    {
+        struct sockaddr_in saddr;
+        socklen_t slen = sizeof(saddr);
+        int32_t clsock = accept(p_ec_listener->fd, (struct sockaddr*)&saddr, &slen);
+        client cl = {.cl_state = ACCEPTING, .connection.sock_fd = clsock};
+
+        if (clsock == ERROR)
+        {
+            int32_t errn = errno;
+            if (errn != EAGAIN)
+            {
+                char errbuf[256] = {0};
+                strerror_r(errn, errbuf, 256);
+                dzlog_error("Registration listener socket error. Cause: %s", errbuf);
+                epoll_ctl(epollfd, EPOLL_CTL_DEL, p_ec_listener->fd, NULL);
+                close(p_ec_listener->fd);
+                p_ec_listener->fd = -1;
+            }
+            break;
+        }
+
+        node* ripbr_node = htable_get(rt_ctx->reg_ipblock_tbl, &saddr.sin_addr, sizeof(saddr.sin_addr), true);
+        if (ripbr_node)
+        {
+            reg_ipb_rec* ripbr = node_container_of(reg_ipb_rec, nd, ripbr_node);
+            uint8_t blk_status = chk_reg_block(ripbr);
+
+            if (blk_status == BLOCKED)
+            {
+                node_put(ripbr_node);
+                close(clsock);
+                continue;
+            }
+            else if (blk_status == REC_EXPIRED)
+            {
+                htable_remove(rt_ctx->reg_ipblock_tbl, ripbr_node->key, ripbr_node->key_size);
+            }
+
+            node_put(ripbr_node);
+        }
+
+        int32_t cres = nfn->accept_fn(&cl.connection);
+        if (cres == ERROR)
+        {
+            close(clsock);
+            continue;
+        }
+
+        client_node* cln = (client_node*)xmalloc(sizeof(client_node));
+        memcpy(&cln->cl, &cl, sizeof(cl));
+        list_add(list, cln);
+        struct epoll_event cl_epev = {.events = EPOLLIN | EPOLLOUT, .data.ptr = cln};
+
+        if (cres == ACCPT_DONE)
+        {
+            cln->cl.cl_state = ACCEPTED;
+            clock_gettime(CLOCK_MONOTONIC, &cln->cl.auth_deadline);
+            cln->cl.auth_deadline.tv_sec += REG_MAXPERM_TIME;
+            cl_timerheap_add(clth, &cln->cl);
+            cl_epev.events &= ~EPOLLOUT;
+        }
+        epoll_ctl(epollfd, EPOLL_CTL_ADD, clsock, &cl_epev);
+    }
+}
+
+
+
 void* reg_thrd_routine(void* reg_thread_ctx)
 {
+    net_fns* nfn = &g_server_cfg->networking_functions;
     reg_thrd_ctx* rt_ctx = (reg_thrd_ctx*)reg_thread_ctx;
     sqlite3_stmt* stmt;
-    int32_t reg_sock_fd = -1;
-    struct epoll_event reg_sock_ev = {.events = EPOLLIN | EPOLLERR, .data.fd = reg_sock_fd};
+    epoll_ctx ec_reg_changed = {.type = EP_EVENT, .fd = rt_ctx->flg_reg_changed};
+    epoll_ctx ec_listener = {.type = EP_LISTENER, .fd = -1};
+
+
     int32_t res = sqlite3_prepare_v2(rt_ctx->db_rw_handle, REG_QUERY, -1, &stmt, NULL);
     if (res)
     {
@@ -40,19 +135,18 @@ void* reg_thrd_routine(void* reg_thread_ctx)
     if (epollfd == ERROR)
         return NULL;
 
-    struct epoll_event ev_reg_allow = {.events = EPOLLIN, .data.fd = rt_ctx->flg_reg_changed};
+    struct epoll_event ev_listener = {.events = EPOLLIN, .data.ptr = &ec_listener};
+    struct epoll_event ev_reg_changed = {.events = EPOLLIN, .data.ptr = &ec_reg_changed};
 
-    epoll_ctl(epollfd, EPOLL_CTL_ADD, rt_ctx->flg_reg_changed, &ev_reg_allow);
+    epoll_ctl(epollfd, EPOLL_CTL_ADD, rt_ctx->flg_reg_changed, &ev_reg_changed);
 
     if (__atomic_load_n(&g_server_cfg->allow_regisrations, memory_order_seq_cst))
     {
-        reg_sock_fd = server_start_tcp(inet_addr(g_server_cfg->gen_interface), g_server_cfg->reg_port, 128, true);
-        epoll_ctl(epollfd, EPOLL_CTL_ADD, reg_sock_fd, &reg_sock_ev);
+        ec_listener.fd = server_start_tcp(inet_addr(g_server_cfg->gen_interface), g_server_cfg->reg_port, 128, true);
+        epoll_ctl(epollfd, EPOLL_CTL_ADD, ec_listener.fd, &ev_listener);
     }
 
-    client_arr arr = {.num_clients = 0, .num_slots = DEF_CL_ARR_SIZE,
-                      .clients = (client*)xmalloc(DEF_CL_ARR_SIZE * sizeof(client))
-                     };
+    client_list* list = list_create();
 
     cl_timerheap clth = {
         .num_clients = 0, .num_slots = DEF_CL_ARR_SIZE,
@@ -68,57 +162,38 @@ void* reg_thrd_routine(void* reg_thread_ctx)
         int32_t num_events = epoll_wait(epollfd, revents, MAX_REVENTS, -1);
         for (uint32_t i = 0; i < num_events; i++)
         {
-            if (revents[i].data.fd == rt_ctx->flg_reg_changed)
+            epoll_ctx* ectx = (epoll_ctx*)revents[i].data.ptr;
+            switch (ectx->type)
             {
-                eventfd_t temp;
-                read(rt_ctx->flg_reg_changed, &temp, 8);
-                uint64_t flg_reg = __atomic_load_n(&g_server_cfg->allow_regisrations, memory_order_seq_cst);
-                if (flg_reg && reg_sock_fd == -1)
+                case EP_EVENT:
                 {
-                    reg_sock_fd = server_start_tcp(inet_addr(g_server_cfg->gen_interface), g_server_cfg->reg_port, 128, true);
-                    reg_sock_ev.data.fd = reg_sock_fd;
-                    epoll_ctl(epollfd, EPOLL_CTL_ADD, reg_sock_fd, &reg_sock_ev);
+                    handle_flg_reg_changed(&ec_reg_changed, &ec_listener, &ev_listener, epollfd);
+                    break;
                 }
-                else if (!flg_reg && reg_sock_fd != -1)
+
+
+
+                case EP_LISTENER:
                 {
-                    epoll_ctl(epollfd, EPOLL_CTL_DEL, reg_sock_fd, NULL);
-                    close(reg_sock_fd);
-                    reg_sock_fd = -1;
+                     handle_new_connections(list, &clth, rt_ctx, &ec_listener, epollfd, nfn);
+                    break;
                 }
-            }
-            else if (revents[i].data.fd == reg_sock_fd)
-            {
-                while (1)
+
+
+
+                case EP_CLIENT:
                 {
-                    client cl = {.cl_state = ACCEPTING};
+                    client_node* pcln = (client_node*)revents[i].data.ptr;
 
-                    int32_t sock = accept(reg_sock_fd, &cl.peer_name, &cl.peer_name_size);
-                    if (sock == EAGAIN)
-                        break;
-
-                    node* ripbr_node = htable_get(rt_ctx->reg_ipblock_tbl, &cl.peer_name, cl.peer_name_size, true);
-                    if (ripbr_node)
+                    if (revents[i].events & (EPOLLHUP | EPOLLERR))
                     {
-                        reg_ipb_rec* ripbr = node_container_of(reg_ipb_rec, nd, ripbr_node);
-                        if (ripbr->is_manual)
-                        {
-                            node_put(ripbr_node);
-                            break;
-                        }
-
-                        struct timespec curr_timestamp;
-                        clock_gettime(CLOCK_MONOTONIC, &curr_timestamp);
-
-                        if (curr_timestamp.tv_sec - ripbr->timestamp.tv_sec >= REGBLOCK_EXPIRY)
-                        {
-                            htable_remove(rt_ctx->reg_ipblock_tbl, ripbr_node->key, ripbr_node->key_size);
-                            node_put(ripbr_node);
-                        }
-                        else if (ripbr->failed_regs)
+                        epoll_ctl(epollfd, EPOLL_CTL_DEL, pcln->cl.connection.sock_fd, NULL);
+                        nfn->disconnect_fn(&pcln->cl.connection, pcln->cl.cl_state);
+                        cl_timerheap_remove(&clth, &pcln->cl);
                     }
-
-                    client_add(&arr, &cl);
                 }
+
+                default: break;
             }
         }
     }

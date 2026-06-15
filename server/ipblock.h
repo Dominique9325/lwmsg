@@ -13,6 +13,10 @@
 #define REGBLOCK_SUCC_THRES 1
 #define REGBLOCK_EXPIRY 7200 // 2 h
 
+#define NOT_BLOCKED 0
+#define BLOCKED 1
+#define REC_EXPIRED 2
+
 typedef struct reg_ipb_rec
 {
     node nd;
@@ -22,6 +26,8 @@ typedef struct reg_ipb_rec
     uint8_t failed_regs;
     const bool is_manual;
 }reg_ipb_rec;
+
+uint8_t chk_reg_block(reg_ipb_rec* ripbr);
 
 #endif //LWMSG_IPBLOCK_H
 

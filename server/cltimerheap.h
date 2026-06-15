@@ -17,4 +17,6 @@ bool cl_timerheap_add(cl_timerheap* heap, client* cl);
 
 client* cl_timerheap_pop(cl_timerheap* heap);
 
+void cl_timerheap_remove(cl_timerheap* heap, client* cl);
+
 #endif //LWMSG_CLTIMERHEAP_H

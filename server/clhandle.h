@@ -15,6 +15,21 @@
 #define TMPBUF_SIZE 2048
 #define UNAMESIZE 32
 #define DEF_CL_ARR_SIZE 128
+#define REG_MAXPERM_TIME 4 // 4 s
+#define INVAL_TH_IND (-1)
+
+enum epoll_type
+{
+    EP_LISTENER,
+    EP_EVENT,
+    EP_CLIENT
+};
+
+typedef struct epoll_ctx
+{
+    uint64_t type;
+    int32_t fd;
+}epoll_ctx;
 
 enum client_state
 {
@@ -34,13 +49,14 @@ typedef struct user
 
 typedef struct client
 {
+    uint64_t ep_type; // MUST BE THE FIRST ELEMENT BECAUSE OF TYPE PUN
     conn connection;
     user usr;
+    int64_t timerheap_index;
     struct timespec auth_deadline;
     void* tmpbuf_recv;
     void* tmbuf_send;
-    socklen_t peer_name_size;
-    struct sockaddr peer_name;
+    in_addr_t peer_name;
     uint8_t cl_state;
 }client;
 
@@ -51,7 +67,23 @@ typedef struct client_arr
     uint64_t num_slots;
 }client_arr;
 
-void client_add(client_arr* arr, client* cl);
+typedef struct client_node
+{
+    client cl;
+    struct client_node* next;
+}client_node;
+
+typedef client_node client_list;
+
+client_list* list_create();
+
+void list_add(client_list* list, client_node* cl);
+
+void list_remove(client_list* list, client_node* cl);
+
+void list_delete(client_list* list);
+
+client* client_add(client_arr* arr, client* cl);
 
 void client_remove(client_arr* arr, client* cl);
 
