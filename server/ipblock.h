@@ -17,6 +17,18 @@
 #define BLOCKED 1
 #define REC_EXPIRED 2
 
+#define IPBL_TBL_SIZE_POW2 10
+#define IPBL_TBL_RESIZE_POW2 1
+#define IPBL_TBL_BKT_PER_LOCK_POW2 10
+#define IPBL_TBL_THRES_LDFAC 100
+
+enum record_reason
+{
+    RSN_MANUAL,
+    RSN_REGFAIL,
+    RSN_REGSUCC
+};
+
 typedef struct reg_ipb_rec
 {
     node nd;
@@ -28,6 +40,10 @@ typedef struct reg_ipb_rec
 }reg_ipb_rec;
 
 uint8_t chk_reg_block(reg_ipb_rec* ripbr);
+
+reg_ipb_rec* reg_ipb_rec_create(in_addr_t peer_name, uint8_t rec_reason);
+
+int32_t ip_cmp(const void* a, const void* b, uint32_t lena, uint32_t lenb);
 
 #endif //LWMSG_IPBLOCK_H
 

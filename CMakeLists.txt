@@ -36,14 +36,18 @@ add_executable(lwmsg-server server/server.c
         common/xalloc.c
         common/xalloc.h
         server/ipblock.c
-        server/ipblock.h)
+        server/ipblock.h
+        common/util.c
+        common/util.h)
 add_executable(lwmsg-client client/client.c
         common/netwrap.c
         common/netwrap.h
         common/lwmp.c
         common/lwmp.h
         common/xalloc.c
-        common/xalloc.h)
+        common/xalloc.h
+        common/util.c
+        common/util.h)
 
 target_include_directories(lwmsg-server PRIVATE server common)
 target_include_directories(lwmsg-client PRIVATE client common)

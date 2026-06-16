@@ -98,6 +98,16 @@ bool cl_timerheap_add(cl_timerheap* heap, client* cl)
     return true;
 }
 
+client* cl_timerheap_peek(cl_timerheap* heap)
+{
+    assert(heap && heap->clients && heap->num_slots);
+
+    if (heap->num_clients)
+        return heap->clients[0];
+
+    return NULL;
+}
+
 client* cl_timerheap_pop(cl_timerheap* heap)
 {
     assert(heap && heap->clients && heap->num_slots);
@@ -122,7 +132,7 @@ client* cl_timerheap_pop(cl_timerheap* heap)
 void cl_timerheap_remove(cl_timerheap* heap, client* cl)
 {
     assert(heap && cl && heap->clients && heap->num_slots);
-    if (!heap->num_clients)
+    if (!heap->num_clients || cl->timerheap_index == INVAL_TH_IND)
         return;
     uint32_t index = cl->timerheap_index;
     heap->num_clients--;

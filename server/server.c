@@ -15,6 +15,7 @@
 #include "servcfg.h"
 #include "thrdctx.h"
 #include "netwrap.h"
+#include "xalloc.h"
 
 int main(int argc, char** argv)
 {
@@ -27,6 +28,8 @@ int main(int argc, char** argv)
         return ERROR;
     }
     zlog_put_mdc("thr_id", "main");
+    zlog_category_t* zct = zlog_get_category("lwmsg");
+    zlog_level_switch(zct, ZLOG_LEVEL_DEBUG);
 
     in_addr_t server_main_if = inet_addr(g_server_cfg->gen_interface);
     if (server_main_if == INADDR_NONE)
@@ -56,12 +59,12 @@ int main(int argc, char** argv)
         return ERROR;
     }
 
-    reg_thrd_ctx* rt_ctx;
+    reg_thrd_ctx* rt_ctx = NULL;
+    reg_ctx_init(&rt_ctx);
     accpt_thrd_ctx* at_ctx;
     worker_thrd_ctx* wt_ctx[num_worker_threads];
 
     worker_ctx_init(wt_ctx, num_worker_threads);
-    reg_ctx_init(&rt_ctx);
     accpt_ctx_init(&at_ctx);
     int32_t ctrl_sock_fd = server_start_tcp(INADDR_LOOPBACK, g_server_cfg->ctrl_port, 1, false);
     //fcntl(ctrl_sock_fd, F_SETFL, O_NONBLOCK);

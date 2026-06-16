@@ -9,11 +9,12 @@
 #include <stdatomic.h>
 #include <netinet/in.h>
 #include <time.h>
+#include "lwmp.h"
 #include "netwrap.h"
 #include "htable.h"
+#include "util.h"
 
 #define TMPBUF_SIZE 2048
-#define UNAMESIZE 32
 #define DEF_CL_ARR_SIZE 128
 #define REG_MAXPERM_TIME 4 // 4 s
 #define INVAL_TH_IND (-1)
@@ -36,7 +37,8 @@ enum client_state
     ACCEPTING,
     ACCEPTED,
     AUTHENTICATING,
-    AUTHENTICATED
+    AUTHENTICATED,
+    REGISTERED
 };
 
 typedef struct user
@@ -49,13 +51,13 @@ typedef struct user
 
 typedef struct client
 {
-    uint64_t ep_type; // MUST BE THE FIRST ELEMENT BECAUSE OF TYPE PUN
+    uint64_t ep_type; // MUST BE THE FIRST ELEMENT BECAUSE OF TYPE PUNNING
     conn connection;
     user usr;
     int64_t timerheap_index;
     struct timespec auth_deadline;
-    void* tmpbuf_recv;
-    void* tmbuf_send;
+    buffer tmpbuf_recv;
+    buffer tmpbuf_send;
     in_addr_t peer_name;
     uint8_t cl_state;
 }client;

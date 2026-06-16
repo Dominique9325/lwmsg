@@ -9,5 +9,6 @@
 #define ATOMIC
 
 #define STR(X) #X
+#define IP4DOT(ipv4_be) ipv4_be & 0xFF, ipv4_be >> 8 & 0xFF, ipv4_be >> 16 & 0xFF, ipv4_be >> 24 & 0xFF
 
 #endif //LWMSG_MISC_H

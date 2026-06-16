@@ -11,6 +11,6 @@
 
 void* reg_thrd_routine(void* reg_thread_ctx);
 
-bool register_user(sqlite3* dbc, sqlite3_stmt* sql, reg_req* req);
+bool process_reg_req(sqlite3* dbc, sqlite3_stmt* reg_stmt, reg_req_group* req);
 
 #endif //LWMSG_REGISTRATION_H

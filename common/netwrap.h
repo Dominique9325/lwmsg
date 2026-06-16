@@ -11,6 +11,8 @@
 #define ACCPT_DONE 0
 #define ACCPT_IN_PROGRESS 1
 
+#define EBLOCK (-2)
+#define EDCONN (-3)
 
 typedef struct conn
 {
@@ -22,11 +24,24 @@ typedef struct net_fns
 {
     int32_t(*accept_fn)(conn* c);
     int32_t(*connect_fn)(uint32_t be_inet4addr, uint16_t le_port);
-    uint64_t(*send_fn)(conn* c, void* buf, uint64_t len);
-    uint64_t(*recv_fn)(conn* c, void* buf, uint64_t len);
+    int64_t(*send_fn)(conn* c, void* buf, uint64_t len);
+    int64_t(*recv_fn)(conn* c, void* buf, uint64_t len);
+    uint64_t(*avail_data_fn)(conn* c);
     void(*disconnect_fn)(conn* c, uint8_t c_state);
 }net_fns;
 
 int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backlog, bool nonblock);
+
+int32_t accept_tcp(conn* c);
+
+int32_t connect_tcp(uint32_t be_inet4addr, uint16_t le_port);
+
+int64_t send_tcp(conn* c, void* buf, uint64_t len);
+
+int64_t recv_tcp(conn* c, void* buf, uint64_t len);
+
+void disconnect_tcp(conn* c, uint8_t c_state);
+
+int32_t accept_tls(conn* c);
 
 #endif //LWMSG_NETWRAP_H

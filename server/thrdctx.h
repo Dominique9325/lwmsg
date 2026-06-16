@@ -18,6 +18,7 @@ typedef struct reg_thrd_ctx
     SSL_CTX* ssl_ctx;
     striped_htable* reg_ipblock_tbl;
     int32_t flg_reg_changed;
+    int32_t flg_shutdown;
 }reg_thrd_ctx;
 
 typedef struct accpt_thrd_ctx
@@ -32,7 +33,7 @@ typedef struct worker_thrd_ctx
     uint8_t thrd_id;
 }worker_thrd_ctx;
 
-uint8_t reg_ctx_init(reg_thrd_ctx** reg_ctx);
+bool reg_ctx_init(reg_thrd_ctx** reg_ctx, SSL_CTX* ssl_ctx, striped_htable* ip_whitelist_tbl);
 
 void reg_ctx_free(reg_thrd_ctx** reg_ctx);
 
