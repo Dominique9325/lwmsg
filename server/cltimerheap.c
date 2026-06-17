@@ -38,7 +38,7 @@ static bool cl_timerheap_resize(cl_timerheap* heap)
 
 static void cl_timerheap_heapify_up(cl_timerheap* heap, uint32_t index)
 {
-    while (index > 0 && MIN(heap->clients, index, (index - 1) / 2) == index)
+    while (index > 0 && (MIN(heap->clients, index, (index - 1) / 2) == index))
     {
         swap(&heap->clients[index], &heap->clients[(index - 1) / 2]);
         index = (index - 1) / 2;
@@ -106,6 +106,24 @@ client* cl_timerheap_peek(cl_timerheap* heap)
         return heap->clients[0];
 
     return NULL;
+}
+
+int64_t cl_timerheap_compute_root_timediff(cl_timerheap* heap, int64_t max_perm_timediff)
+{
+    client* cl = cl_timerheap_peek(heap);
+    if (!cl)
+        return CLTH_EMPTY;
+
+    struct timespec curr_timestamp;
+    clock_gettime(CLOCK_MONOTONIC, &curr_timestamp);
+    int64_t timediff_sec = cl->auth_deadline.tv_sec - curr_timestamp.tv_sec;
+    if (cl->cl_state == REGISTERED)
+        return CLTH_NOT_APPLICABLE;
+
+    if (timediff_sec <= 0)
+        return CLTH_TIMEOUT;
+
+    return timediff_sec * 1000;
 }
 
 client* cl_timerheap_pop(cl_timerheap* heap)

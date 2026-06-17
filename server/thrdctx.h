@@ -17,6 +17,7 @@ typedef struct reg_thrd_ctx
     sqlite3* db_rw_handle;
     SSL_CTX* ssl_ctx;
     striped_htable* reg_ipblock_tbl;
+    striped_htable* ip_whitelist_tbl;
     int32_t flg_reg_changed;
     int32_t flg_shutdown;
 }reg_thrd_ctx;

@@ -6,8 +6,10 @@
 
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
 #include <netinet/in.h>
 #include <errno.h>
+
 #define IP4DOT(be_addr) be_addr >> 24, be_addr >> 16 & 0xFF, be_addr >> 8 & 0xFF, be_addr & 0xFF
 
 int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backlog, bool nonblock)
@@ -56,4 +58,58 @@ int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backl
     error:
     close(sock);
     return ERROR;
+}
+
+int32_t accept_tcp(conn* c)
+{
+    return ACCPT_DONE;
+}
+
+//int32_t connect_tcp(uint32_t be_inet4addr, uint16_t le_port);
+
+int64_t send_tcp(conn* c, void* buf, uint64_t len)
+{
+    int64_t written = send(c->sock_fd, buf, len, MSG_NOSIGNAL);
+    if (written == ERROR)
+    {
+        int32_t err = errno;
+        switch (err)
+        {
+            case EAGAIN : return EBLOCK;
+            case ECONNRESET:
+            case EPIPE : return EDCONN;
+            default: return ERROR;
+        }
+    }
+
+    return written;
+}
+
+int64_t recv_tcp(conn* c, void* buf, uint64_t len)
+{
+    int64_t received = recv(c->sock_fd, buf, len, 0);
+    if (received == ERROR)
+    {
+        int32_t err = errno;
+        switch (err)
+        {
+            case EAGAIN : return EBLOCK;
+            case ECONNRESET : return EDCONN;
+            default: return ERROR;
+        }
+    }
+
+    return received;
+}
+
+uint64_t avail_data_tcp(conn* c)
+{
+    uint64_t data;
+    ioctl(c->sock_fd, FIONREAD, &data);
+    return data;
+}
+
+void disconnect_tcp(conn* c, uint8_t c_state)
+{
+    close(c->sock_fd);
 }

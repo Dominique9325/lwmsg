@@ -43,7 +43,7 @@ int32_t ip_cmp(const void* a, const void* b, uint32_t lena, uint32_t lenb)
             return cmpres;
     }
 
-    return -1; // won't happen, just here to suppress warning.
+    return 0;
 }
 
 reg_ipb_rec* reg_ipb_rec_create(in_addr_t peer_name, uint8_t rec_reason)
@@ -63,9 +63,31 @@ reg_ipb_rec* reg_ipb_rec_create(in_addr_t peer_name, uint8_t rec_reason)
     clock_gettime(CLOCK_MONOTONIC, &ts);
     ts.tv_sec += REGBLOCK_EXPIRY;
     temp.timestamp = ts;
-    temp.nd.key = &temp.ip_addr;
 
     reg_ipb_rec* rec = (reg_ipb_rec*)xmalloc(sizeof(reg_ipb_rec));
     memcpy(rec, &temp, sizeof(reg_ipb_rec));
+    rec->nd.key = &rec->ip_addr;
+    return rec;
+}
+
+static void whitelist_rec_free(node* node)
+{
+    whitelist_rec* rec = node_container_of(whitelist_rec, nd, node);
+    free(rec);
+}
+
+whitelist_rec* whitelist_rec_create(in_addr_t peer_name)
+{
+    whitelist_rec temp = {
+        .nd.free_fn = whitelist_rec_free,
+        .nd.ref_cnt = 1,
+        .nd.next = NULL,
+        .nd.key_size = sizeof(peer_name),
+        .ip_addr = peer_name
+    };
+
+    whitelist_rec* rec = (whitelist_rec*)xmalloc(sizeof(whitelist_rec));
+    memcpy(rec, &temp, sizeof(whitelist_rec));
+    rec->nd.key = &rec->ip_addr;
     return rec;
 }

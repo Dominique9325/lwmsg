@@ -281,7 +281,7 @@ bool htable_add(striped_htable* htable, node* element)
     assert(htable && htable->buckets && htable->locks && element);
 
 #ifdef NDEBUG
-    if (!htable || !htable->buckets || htable->locks || !element)
+    if (!htable || !htable->buckets || !htable->locks || !element)
         return false;
 #endif
 

@@ -70,6 +70,8 @@ void load_cfg(const char* cfg_file);
 
 void save_cfg(const char* cfg_file);
 
+void load_netfns();
+
 
 
 #endif //LWMSG_SERVCFG_H

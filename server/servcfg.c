@@ -105,3 +105,27 @@ void save_cfg(const char* cfg_file)
     }
     json_object_put(cfg_json);
 }
+
+static void load_plain_tcp_netfns()
+{
+    net_fns* nfn = &g_server_cfg->networking_functions;
+    nfn->accept_fn = accept_tcp;
+    nfn->avail_data_fn = avail_data_tcp;
+    nfn->connect_fn = NULL;
+    nfn->disconnect_fn = disconnect_tcp;
+    nfn->recv_fn = recv_tcp;
+    nfn->send_fn = send_tcp;
+}
+
+static void load_tls_netfns()
+{
+    ;
+}
+
+void load_netfns()
+{
+    if (g_server_cfg->use_tls)
+        load_tls_netfns();
+    else
+        load_plain_tcp_netfns();
+}

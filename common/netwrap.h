@@ -40,6 +40,8 @@ int64_t send_tcp(conn* c, void* buf, uint64_t len);
 
 int64_t recv_tcp(conn* c, void* buf, uint64_t len);
 
+uint64_t avail_data_tcp(conn* c);
+
 void disconnect_tcp(conn* c, uint8_t c_state);
 
 int32_t accept_tls(conn* c);

@@ -16,7 +16,6 @@
 
 #define TMPBUF_SIZE 2048
 #define DEF_CL_ARR_SIZE 128
-#define REG_MAXPERM_TIME 4 // 4 s
 #define INVAL_TH_IND (-1)
 
 enum epoll_type
