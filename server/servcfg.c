@@ -3,10 +3,13 @@
 #include <errno.h>
 #include <unistd.h>
 #include <stddef.h>
+#include <ifaddrs.h>
 #include <stdio.h>
+#include <openssl/err.h>
 #include <string.h>
 #include <json-c/json_object.h>
 #include <json-c/json.h>
+#include "zlog.h"
 #include "xalloc.h"
 
 #define STR(X) #X
@@ -119,7 +122,13 @@ static void load_plain_tcp_netfns()
 
 static void load_tls_netfns()
 {
-    ;
+    net_fns* nfn = &g_server_cfg->networking_functions;
+    nfn->accept_fn = accept_tls;
+    nfn->avail_data_fn = avail_data_tls;
+    nfn->connect_fn = NULL;
+    nfn->disconnect_fn = disconnect_tls;
+    nfn->recv_fn = recv_tls;
+    nfn->send_fn = send_tls;
 }
 
 void load_netfns()
@@ -128,4 +137,67 @@ void load_netfns()
         load_tls_netfns();
     else
         load_plain_tcp_netfns();
+}
+
+static const unsigned char alpn_protos[] = {4, 'l', 'w', 'm', 'p'};
+
+void setup_tls(SSL_CTX** ssl_ctx)
+{
+    *ssl_ctx = NULL;
+    if (!g_server_cfg->use_tls)
+        return;
+
+    SSL_CTX* temp = SSL_CTX_new(TLS_server_method());
+    int32_t res = 0;
+    res = SSL_CTX_set_alpn_protos(temp, alpn_protos, sizeof(alpn_protos));
+    if (res)
+        goto error;
+
+    res = SSL_CTX_use_certificate_chain_file(temp, g_server_cfg->cert_chain_path);
+    if (res != 1)
+        goto error;
+
+    res = SSL_CTX_use_PrivateKey_file(temp, g_server_cfg->private_key_path, SSL_FILETYPE_PEM);
+    if (res != 1)
+        goto error;
+
+    res = SSL_CTX_check_private_key(temp);
+    if (res != 1)
+        goto error;
+
+    SSL_CTX_set_options(temp, SSL_OP_IGNORE_UNEXPECTED_EOF);
+    *ssl_ctx = temp;
+
+    dzlog_debug("TLS setup successful.");
+    return;
+
+    error:
+    dzlog_fatal("Error setting up OpenSSL. Error: %s", ERR_error_string(ERR_get_error(), NULL));
+    SSL_CTX_free(temp);
+    *ssl_ctx = NULL;
+}
+
+bool is_if_valid(in_addr_t if_addr)
+{
+    if (if_addr == INADDR_ANY)
+        return true;
+
+    bool retval = false;
+    struct ifaddrs* ifs = NULL;
+    getifaddrs(&ifs);
+    if (!ifs)
+        return false;
+
+    struct ifaddrs* temp = ifs;
+    while (temp)
+    {
+        if (temp->ifa_addr && ((struct sockaddr_in*)temp->ifa_addr)->sin_addr.s_addr == if_addr)
+        {
+            retval = true;
+            break;
+        }
+        temp = temp->ifa_next;
+    }
+    freeifaddrs(ifs);
+    return retval;
 }

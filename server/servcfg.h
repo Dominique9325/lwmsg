@@ -39,7 +39,7 @@ X(uint8_t,                 cl_htable_locks_pow2,            1,                32
 X(uint8_t,                 autoconf_nr_threads,             false,            true,        false   ) \
 X(uint8_t,                 use_tls,                         false,            true,        true    ) \
 X(uint8_t,                 use_auth,                        false,            true,        true    ) \
-X(ATOMIC uint8_t,          allow_regisrations,              false,            true,        true    ) \
+X(ATOMIC uint8_t,          allow_registrations,              false,            true,        true    ) \
 X(ATOMIC uint8_t,          allow_file_transfers,            false,            true,        true    ) \
 X(ATOMIC uint8_t,          use_ip_whitelist,                false,            true,        false   )
 // type                       var name                    min value        max value     default value
@@ -72,6 +72,8 @@ void save_cfg(const char* cfg_file);
 
 void load_netfns();
 
+void setup_tls(SSL_CTX** ssl_ctx);
 
+bool is_if_valid(in_addr_t if_addr);
 
 #endif //LWMSG_SERVCFG_H

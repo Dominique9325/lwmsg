@@ -34,8 +34,8 @@ typedef struct reg_ipb_rec
     node nd;
     struct timespec timestamp;
     in_addr_t ip_addr;
-    uint32_t succ_regs;
-    uint32_t failed_regs;
+    uint8_t succ_regs;
+    uint8_t failed_regs;
     const bool is_manual;
 }reg_ipb_rec;
 

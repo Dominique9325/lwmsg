@@ -13,6 +13,8 @@ client_list* list_create()
 
 void list_add(client_list* list, client_node* cl)
 {
+    cl->next = NULL;
+
     if (!list->next)
     {
         list->next = cl;

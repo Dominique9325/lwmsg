@@ -29,9 +29,16 @@
 static void cleanup_reg_client(client_list* list, cl_timerheap* clth, client_node* pcln, int32_t epollfd, net_fns* nfn)
 {
     epoll_ctl(epollfd, EPOLL_CTL_DEL, pcln->cl.connection.sock_fd, NULL);
-    nfn->disconnect_fn(&pcln->cl.connection, pcln->cl.cl_state);
+    nfn->disconnect_fn(&pcln->cl.connection);
+    if (pcln->cl.tmpbuf_send.buf)
+        free(pcln->cl.tmpbuf_send.buf);
+
+    if (pcln->cl.tmpbuf_recv.buf)
+        free(pcln->cl.tmpbuf_recv.buf);
+
     cl_timerheap_remove(clth, &pcln->cl);
     list_remove(list, pcln);
+    free(pcln);
 }
 
 static void handle_flg_reg_changed(epoll_ctx* p_ec_reg_changed, epoll_ctx* p_ec_listener,
@@ -39,7 +46,7 @@ static void handle_flg_reg_changed(epoll_ctx* p_ec_reg_changed, epoll_ctx* p_ec_
 {
     eventfd_t temp;
     read(p_ec_reg_changed->fd, &temp, 8);
-    uint8_t flg_reg = __atomic_load_n(&g_server_cfg->allow_regisrations, memory_order_seq_cst);
+    uint8_t flg_reg = __atomic_load_n(&g_server_cfg->allow_registrations, memory_order_seq_cst);
 
     if (flg_reg && p_ec_listener->fd == -1)
     {
@@ -56,7 +63,7 @@ static void handle_flg_reg_changed(epoll_ctx* p_ec_reg_changed, epoll_ctx* p_ec_
 }
 
 static void handle_shutdown(client_list* list, cl_timerheap* clth, int32_t epollfd, net_fns* nfn, int32_t flg_reg_ch,
-                            int32_t flg_shutdown, sqlite3_stmt* reg_stmt, sqlite3_stmt* del_stmt)
+                            int32_t flg_shutdown, sqlite3_stmt* reg_stmt, sqlite3_stmt* del_stmt, int32_t listener_sock_fd)
 {
     sqlite3_finalize(reg_stmt);
     sqlite3_finalize(del_stmt);
@@ -67,27 +74,31 @@ static void handle_shutdown(client_list* list, cl_timerheap* clth, int32_t epoll
 
     epoll_ctl(epollfd, EPOLL_CTL_DEL, flg_shutdown, NULL);
     epoll_ctl(epollfd, EPOLL_CTL_DEL, flg_reg_ch, NULL);
+    epoll_ctl(epollfd, EPOLL_CTL_DEL, listener_sock_fd, NULL);
+    close(listener_sock_fd);
 
     client_node* curr = list->next;
     client_node* prev = NULL;
-    while (curr->next)
+    while (curr)
     {
         epoll_ctl(epollfd, EPOLL_CTL_DEL, curr->cl.connection.sock_fd, NULL);
-        nfn->disconnect_fn(&curr->cl.connection, curr->cl.cl_state);
+        nfn->disconnect_fn(&curr->cl.connection);
+        if (curr->cl.tmpbuf_recv.buf)
+        {
+            free(curr->cl.tmpbuf_recv.buf);
+            curr->cl.tmpbuf_recv.buf = NULL;
+        }
+        if (curr->cl.tmpbuf_send.buf)
+        {
+            free(curr->cl.tmpbuf_send.buf);
+            curr->cl.tmpbuf_send.buf = NULL;
+        }
         prev = curr;
         curr = curr->next;
-        if (prev->cl.tmpbuf_recv.buf)
-        {
-            free(prev->cl.tmpbuf_recv.buf);
-            prev->cl.tmpbuf_recv.buf = NULL;
-        }
-        if (prev->cl.tmpbuf_send.buf)
-        {
-            free(prev->cl.tmpbuf_send.buf);
-            prev->cl.tmpbuf_send.buf = NULL;
-        }
         free(prev);
     }
+    free(list);
+    close(epollfd);
     dzlog_warn("Registration thread shutting down.");
 }
 
@@ -98,6 +109,7 @@ static void track_new_client(client_list* list, cl_timerheap* clth, client* cl, 
     cln->cl.tmpbuf_recv.buf = (char*)xmalloc(sizeof(reg_req_group));
     cln->cl.tmpbuf_recv.buf_size = sizeof(reg_req_group);
     cln->cl.timerheap_index = INVAL_TH_IND;
+    memset(&cln->cl.tmpbuf_send, 0, sizeof(cln->cl.tmpbuf_send));
     fcntl(cln->cl.connection.sock_fd, F_SETFL, O_NONBLOCK);
     list_add(list, cln);
     dzlog_info("%u.%u.%u.%u connected.", IP4DOT(cln->cl.peer_name));
@@ -122,7 +134,13 @@ static void handle_new_connections(client_list* list, cl_timerheap* clth, reg_th
         struct sockaddr_in saddr;
         socklen_t slen = sizeof(saddr);
         int32_t clsock = accept(p_ec_listener->fd, (struct sockaddr*)&saddr, &slen);
-        client cl = {.cl_state = ACCEPTING, .connection.sock_fd = clsock, .ep_type = EP_CLIENT, .peer_name = saddr.sin_addr.s_addr};
+        client cl = {
+            .cl_state = ACCEPTING,
+            .connection.sock_fd = clsock,
+            .ep_type = EP_CLIENT,
+            .peer_name = saddr.sin_addr.s_addr,
+            .connection.ssl = NULL
+        };
 
         if (clsock == ERROR)
         {
@@ -137,6 +155,12 @@ static void handle_new_connections(client_list* list, cl_timerheap* clth, reg_th
                 p_ec_listener->fd = -1;
             }
             break;
+        }
+
+        if (__atomic_load_n(&g_server_cfg->use_ip_whitelist, memory_order_seq_cst) && !htable_get(rt_ctx->ip_whitelist_tbl, &saddr.sin_addr.s_addr, sizeof(in_addr_t), false))
+        {
+            close(clsock);
+            continue;
         }
 
         node* ripbr_node = htable_get(rt_ctx->reg_ipblock_tbl, &saddr.sin_addr.s_addr, sizeof(saddr.sin_addr.s_addr), true);
@@ -161,7 +185,7 @@ static void handle_new_connections(client_list* list, cl_timerheap* clth, reg_th
             node_put(ripbr_node);
         }
 
-        int32_t cres = nfn->accept_fn(&cl.connection);
+        int32_t cres = nfn->accept_fn(&cl.connection, rt_ctx->ssl_ctx);
         if (cres == ERROR)
         {
             close(clsock);
@@ -244,7 +268,7 @@ static void handle_client_event(client_list* list, cl_timerheap* clth, struct ep
 
     if (pcln->cl.cl_state == ACCEPTING)
     {
-        int32_t ares = nfn->accept_fn(&pcln->cl.connection);
+        int32_t ares = nfn->accept_fn(&pcln->cl.connection, rt_ctx->ssl_ctx);
         if (ares == ERROR)
         {
             dzlog_info("%u.%u.%u.%u failed to connect.", IP4DOT(pcln->cl.peer_name));
@@ -341,6 +365,7 @@ static int64_t handle_clth_timeout(client_list* list, cl_timerheap* clth, int32_
 
 void* reg_thrd_routine(void* reg_thread_ctx)
 {
+    zlog_put_mdc("thrd_id", "reg");
     net_fns* nfn = &g_server_cfg->networking_functions;
     reg_thrd_ctx* rt_ctx = (reg_thrd_ctx*)reg_thread_ctx;
     sqlite3_stmt* reg_stmt = NULL;
@@ -375,7 +400,7 @@ void* reg_thrd_routine(void* reg_thread_ctx)
     epoll_ctl(epollfd, EPOLL_CTL_ADD, rt_ctx->flg_reg_changed, &ev_reg_changed);
     epoll_ctl(epollfd, EPOLL_CTL_ADD, rt_ctx->flg_shutdown, &ev_shutdown);
 
-    if (__atomic_load_n(&g_server_cfg->allow_regisrations, memory_order_seq_cst))
+    if (__atomic_load_n(&g_server_cfg->allow_registrations, memory_order_seq_cst))
     {
         ec_listener.fd = server_start_tcp(inet_addr(g_server_cfg->gen_interface), g_server_cfg->reg_port, 128, true);
         epoll_ctl(epollfd, EPOLL_CTL_ADD, ec_listener.fd, &ev_listener);
@@ -409,7 +434,8 @@ void* reg_thrd_routine(void* reg_thread_ctx)
                     if (ectx->fd == ec_shutdown.fd && revents[i].events & EPOLLIN)
                     {
                         handle_shutdown(list, &clth, epollfd, nfn, rt_ctx->flg_reg_changed, rt_ctx->flg_shutdown,
-                            reg_stmt, del_stmt);
+                            reg_stmt, del_stmt, ec_listener.fd);
+                        dzlog_debug("ripbr_count = %lu", htable_get_elem_cnt(rt_ctx->reg_ipblock_tbl));
                         pthread_exit(NULL);
                     }
                     else

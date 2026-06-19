@@ -38,7 +38,9 @@ add_executable(lwmsg-server server/server.c
         server/ipblock.c
         server/ipblock.h
         common/util.c
-        common/util.h)
+        common/util.h
+        server/worker.c
+        server/worker.h)
 add_executable(lwmsg-client client/client.c
         common/netwrap.c
         common/netwrap.h

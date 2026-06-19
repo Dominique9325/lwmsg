@@ -34,7 +34,7 @@ striped_htable* htable_create(uint8_t htable_pow2_size_factor, uint8_t htable_po
 
 bool htable_add(striped_htable* htable, node* element);
 
-void htable_remove(striped_htable*, const void* key, uint32_t key_size);
+void htable_remove(striped_htable* htable, const void* key, uint32_t key_size);
 
 node* htable_get(striped_htable* htable, const void* key, uint32_t len, bool ref_inc);
 
@@ -44,4 +44,5 @@ void node_put(node* n);
 
 void htable_delete(striped_htable* htable);
 
+uint64_t htable_get_elem_cnt(striped_htable* htable);
 #endif //LWMSG_HTABLE_H

@@ -9,6 +9,9 @@
 #include <sys/ioctl.h>
 #include <netinet/in.h>
 #include <errno.h>
+#include <openssl/err.h>
+
+#include "zlog.h"
 
 #define IP4DOT(be_addr) be_addr >> 24, be_addr >> 16 & 0xFF, be_addr >> 8 & 0xFF, be_addr & 0xFF
 
@@ -25,7 +28,7 @@ int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backl
         int32_t err = errno;
         if (err == EADDRNOTAVAIL)
         {
-            fprintf(stderr, "Error: %u.%u.%u.%u is not a valid interface.\n", IP4DOT(addr.sin_addr.s_addr));
+            dzlog_fatal("Error: %u.%u.%u.%u is not a valid interface.", IP4DOT(addr.sin_addr.s_addr));
             goto error;
         }
         else if (err == EADDRINUSE)
@@ -39,15 +42,15 @@ int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backl
 
             if (res == ERROR)
             {
-                fprintf(stderr, "Error: Original port %u is already in use, failed to find a suitable replacement.\n", le_port);
+                dzlog_fatal("Original port %u is already in use, failed to find a suitable replacement.", le_port);
                 goto error;
             }
 
-            printf("Warning: Original port %u is already in use, switched to using port %u.\n", le_port, new_port - 1);
+            dzlog_warn("Original port %u is already in use, switched to using port %u.", le_port, new_port - 1);
         }
         else
         {
-            fprintf(stderr, "Error: Failed to bind to interface %u.%u.%u.%u:%u. Reason: %s",  IP4DOT(be_inet4addr), le_port, strerror(err));
+            dzlog_fatal("Failed to bind to interface %u.%u.%u.%u:%u. Reason: %s",  IP4DOT(be_inet4addr), le_port, strerror(err));
             goto error;
         }
     }
@@ -60,8 +63,9 @@ int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backl
     return ERROR;
 }
 
-int32_t accept_tcp(conn* c)
+int32_t accept_tcp(conn* c, SSL_CTX* ssl_ctx)
 {
+    (void)ssl_ctx;
     return ACCPT_DONE;
 }
 
@@ -77,7 +81,7 @@ int64_t send_tcp(conn* c, void* buf, uint64_t len)
         {
             case EAGAIN : return EBLOCK;
             case ECONNRESET:
-            case EPIPE : return EDCONN;
+            case EPIPE : return ERROR;
             default: return ERROR;
         }
     }
@@ -94,7 +98,7 @@ int64_t recv_tcp(conn* c, void* buf, uint64_t len)
         switch (err)
         {
             case EAGAIN : return EBLOCK;
-            case ECONNRESET : return EDCONN;
+            case ECONNRESET : return ERROR;
             default: return ERROR;
         }
     }
@@ -109,7 +113,94 @@ uint64_t avail_data_tcp(conn* c)
     return data;
 }
 
-void disconnect_tcp(conn* c, uint8_t c_state)
+void disconnect_tcp(conn* c)
 {
+    close(c->sock_fd);
+}
+
+int32_t accept_tls(conn* c, SSL_CTX* ssl_ctx)
+{
+    if (!c->ssl)
+    {
+        SSL* ssl = SSL_new(ssl_ctx);
+        if (!ssl)
+            return ERROR;
+
+        if (!SSL_set_fd(ssl, c->sock_fd))
+            return ERROR;
+
+        c->ssl = ssl;
+    }
+
+
+    int32_t res = SSL_accept(c->ssl);
+    if (res != 1)
+    {
+        int32_t err = SSL_get_error(c->ssl, res);
+        dzlog_info("SSL error: %d", err);
+        switch (err)
+        {
+            case SSL_ERROR_ZERO_RETURN:
+            case SSL_ERROR_SYSCALL: return ERROR;
+            case SSL_ERROR_WANT_READ:
+            case SSL_ERROR_WANT_WRITE: return ACCPT_IN_PROGRESS;
+            default: return ERROR;
+        }
+    }
+    return ACCPT_DONE;
+}
+
+int32_t connect_tls(uint32_t be_inet4addr, uint16_t le_port);
+
+int64_t send_tls(conn* c, void* buf, uint64_t len)
+{
+    int32_t res = SSL_write(c->ssl, buf, (int32_t)len);
+    if (res <= 0)
+    {
+        int32_t err = SSL_get_error(c->ssl, res);
+        switch (err)
+        {
+            case SSL_ERROR_ZERO_RETURN:
+            case SSL_ERROR_SYSCALL: return ERROR;
+            case SSL_ERROR_WANT_READ:
+            case SSL_ERROR_WANT_WRITE: return EBLOCK;
+            default: return ERROR;
+        }
+    }
+    return res;
+}
+
+int64_t recv_tls(conn* c, void* buf, uint64_t len)
+{
+    int32_t res = SSL_read(c->ssl, buf, (int32_t)len);
+    if (res <= 0)
+    {
+        int32_t err = SSL_get_error(c->ssl, res);
+        switch (err)
+        {
+            case SSL_ERROR_ZERO_RETURN:
+            case SSL_ERROR_SYSCALL: return ERROR;
+            case SSL_ERROR_WANT_READ:
+            case SSL_ERROR_WANT_WRITE: return EBLOCK;
+            default: return ERROR;
+        }
+    }
+    return res;
+}
+
+uint64_t avail_data_tls(conn* c)
+{
+    int32_t data = SSL_pending(c->ssl);
+    if (data < 0)
+        return 0;
+
+    return data;
+}
+
+void disconnect_tls(conn* c)
+{
+    if (SSL_is_init_finished(c->ssl))
+        SSL_shutdown(c->ssl);
+
     close(c->sock_fd);
 }
