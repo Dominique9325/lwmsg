@@ -26,12 +26,10 @@
 #define DEL_QUERY "DELETE FROM users WHERE username = :username AND password_sha256 = :password_sha256"
 #define MAX_REVENTS 1024
 
-static void cleanup_reg_client(client_list* list, cl_timerheap* clth, client_node* pcln, int32_t epollfd, net_fns* nfn)
+static void cleanup_reg_client(reg_client_list* list, cl_timerheap* clth, reg_client_node* pcln, int32_t epollfd, net_fns* nfn)
 {
     epoll_ctl(epollfd, EPOLL_CTL_DEL, pcln->cl.connection.sock_fd, NULL);
     nfn->disconnect_fn(&pcln->cl.connection);
-    if (pcln->cl.tmpbuf_send.buf)
-        free(pcln->cl.tmpbuf_send.buf);
 
     if (pcln->cl.tmpbuf_recv.buf)
         free(pcln->cl.tmpbuf_recv.buf);
@@ -62,23 +60,21 @@ static void handle_flg_reg_changed(epoll_ctx* p_ec_reg_changed, epoll_ctx* p_ec_
     }
 }
 
-static void handle_shutdown(client_list* list, cl_timerheap* clth, int32_t epollfd, net_fns* nfn, int32_t flg_reg_ch,
+static void handle_shutdown(reg_client_list* list, cl_timerheap* clth, int32_t epollfd, net_fns* nfn, int32_t flg_reg_ch,
                             int32_t flg_shutdown, sqlite3_stmt* reg_stmt, sqlite3_stmt* del_stmt, int32_t listener_sock_fd)
 {
     sqlite3_finalize(reg_stmt);
     sqlite3_finalize(del_stmt);
     free(clth->clients);
 
-    eventfd_t temp;
-    read(flg_shutdown, &temp, 8);
-
     epoll_ctl(epollfd, EPOLL_CTL_DEL, flg_shutdown, NULL);
     epoll_ctl(epollfd, EPOLL_CTL_DEL, flg_reg_ch, NULL);
     epoll_ctl(epollfd, EPOLL_CTL_DEL, listener_sock_fd, NULL);
-    close(listener_sock_fd);
+    if (listener_sock_fd != ERROR)
+        close(listener_sock_fd);
 
-    client_node* curr = list->next;
-    client_node* prev = NULL;
+    reg_client_node* curr = list->next;
+    reg_client_node* prev = NULL;
     while (curr)
     {
         epoll_ctl(epollfd, EPOLL_CTL_DEL, curr->cl.connection.sock_fd, NULL);
@@ -87,11 +83,6 @@ static void handle_shutdown(client_list* list, cl_timerheap* clth, int32_t epoll
         {
             free(curr->cl.tmpbuf_recv.buf);
             curr->cl.tmpbuf_recv.buf = NULL;
-        }
-        if (curr->cl.tmpbuf_send.buf)
-        {
-            free(curr->cl.tmpbuf_send.buf);
-            curr->cl.tmpbuf_send.buf = NULL;
         }
         prev = curr;
         curr = curr->next;
@@ -102,14 +93,13 @@ static void handle_shutdown(client_list* list, cl_timerheap* clth, int32_t epoll
     dzlog_warn("Registration thread shutting down.");
 }
 
-static void track_new_client(client_list* list, cl_timerheap* clth, client* cl, uint8_t acceptres, int32_t epollfd)
+static void track_new_client(reg_client_list* list, cl_timerheap* clth, reg_client* cl, uint8_t acceptres, int32_t epollfd)
 {
-    client_node* cln = (client_node*)xmalloc(sizeof(client_node));
+    reg_client_node* cln = (reg_client_node*)xmalloc(sizeof(reg_client_node));
     memcpy(&cln->cl, cl, sizeof(*cl));
     cln->cl.tmpbuf_recv.buf = (char*)xmalloc(sizeof(reg_req_group));
     cln->cl.tmpbuf_recv.buf_size = sizeof(reg_req_group);
     cln->cl.timerheap_index = INVAL_TH_IND;
-    memset(&cln->cl.tmpbuf_send, 0, sizeof(cln->cl.tmpbuf_send));
     fcntl(cln->cl.connection.sock_fd, F_SETFL, O_NONBLOCK);
     list_add(list, cln);
     dzlog_info("%u.%u.%u.%u connected.", IP4DOT(cln->cl.peer_name));
@@ -126,7 +116,7 @@ static void track_new_client(client_list* list, cl_timerheap* clth, client* cl, 
     epoll_ctl(epollfd, EPOLL_CTL_ADD, cln->cl.connection.sock_fd, &cl_epev);
 }
 
-static void handle_new_connections(client_list* list, cl_timerheap* clth, reg_thrd_ctx* rt_ctx,
+static void handle_new_connections(reg_client_list* list, cl_timerheap* clth, reg_thrd_ctx* rt_ctx,
                                    epoll_ctx* p_ec_listener, int32_t epollfd, net_fns* nfn)
 {
     while (true)
@@ -134,7 +124,7 @@ static void handle_new_connections(client_list* list, cl_timerheap* clth, reg_th
         struct sockaddr_in saddr;
         socklen_t slen = sizeof(saddr);
         int32_t clsock = accept(p_ec_listener->fd, (struct sockaddr*)&saddr, &slen);
-        client cl = {
+        reg_client cl = {
             .cl_state = ACCEPTING,
             .connection.sock_fd = clsock,
             .ep_type = EP_CLIENT,
@@ -159,6 +149,7 @@ static void handle_new_connections(client_list* list, cl_timerheap* clth, reg_th
 
         if (__atomic_load_n(&g_server_cfg->use_ip_whitelist, memory_order_seq_cst) && !htable_get(rt_ctx->ip_whitelist_tbl, &saddr.sin_addr.s_addr, sizeof(in_addr_t), false))
         {
+            dzlog_notice("Disconnected peer not present on the whitelist. IP: %u.%u.%u.%u", IP4DOT(saddr.sin_addr.s_addr));
             close(clsock);
             continue;
         }
@@ -196,7 +187,7 @@ static void handle_new_connections(client_list* list, cl_timerheap* clth, reg_th
     }
 }
 
-static void manage_reg_ipbr(reg_thrd_ctx* rt_ctx, client_node* pcln, uint8_t ripb_reason)
+static void manage_reg_ipbr(reg_thrd_ctx* rt_ctx, reg_client_node* pcln, uint8_t ripb_reason)
 {
     node* ripbr_node = htable_get(rt_ctx->reg_ipblock_tbl, &pcln->cl.peer_name, sizeof(pcln->cl.peer_name), true);
     if (!ripbr_node)
@@ -222,8 +213,8 @@ static void manage_reg_ipbr(reg_thrd_ctx* rt_ctx, client_node* pcln, uint8_t rip
     }
 }
 
-static void reg_handle_disconnect(client_list* list, cl_timerheap* clth, reg_thrd_ctx* rt_ctx,
-                                  struct epoll_event* revent, net_fns* nfn, client_node* pcln,
+static void reg_handle_disconnect(reg_client_list* list, cl_timerheap* clth, reg_thrd_ctx* rt_ctx,
+                                  struct epoll_event* revent, net_fns* nfn, reg_client_node* pcln,
                                   sqlite3_stmt* reg_stmt, sqlite3_stmt* del_stmt, int32_t epollfd)
 {
     if (revent->events & EPOLLIN)
@@ -254,11 +245,11 @@ static void reg_handle_disconnect(client_list* list, cl_timerheap* clth, reg_thr
     cleanup_reg_client(list, clth, pcln, epollfd, nfn);
 }
 
-static void handle_client_event(client_list* list, cl_timerheap* clth, struct epoll_event* revent,
+static void handle_client_event(reg_client_list* list, cl_timerheap* clth, struct epoll_event* revent,
                         reg_thrd_ctx* rt_ctx, net_fns* nfn, sqlite3_stmt* reg_stmt, sqlite3_stmt* del_stmt,
                         int32_t epollfd)
 {
-    client_node* pcln = (client_node*)revent->data.ptr;
+    reg_client_node* pcln = (reg_client_node*)revent->data.ptr;
 
     if (revent->events & (EPOLLHUP | EPOLLERR))
     {
@@ -334,12 +325,12 @@ static void handle_client_event(client_list* list, cl_timerheap* clth, struct ep
     }
 }
 
-static int64_t handle_clth_timeout(client_list* list, cl_timerheap* clth, int32_t epollfd, net_fns* nfn)
+static int64_t handle_clth_timeout(reg_client_list* list, cl_timerheap* clth, int32_t epollfd, net_fns* nfn)
 {
     while (true)
     {
         int64_t timediff = cl_timerheap_compute_root_timediff(clth, CLTH_REG_MAXPERM_TIME);
-        client* cl = NULL;
+        reg_client* cl = NULL;
 
         switch (timediff)
         {
@@ -350,7 +341,7 @@ static int64_t handle_clth_timeout(client_list* list, cl_timerheap* clth, int32_
             case CLTH_TIMEOUT:
                 cl = cl_timerheap_pop(clth);
                 reg_send_resp(cl, nfn, REG_RESP_TIMEOUT);
-                cleanup_reg_client(list, clth, (client_node*)cl, epollfd, nfn);
+                cleanup_reg_client(list, clth, (reg_client_node*)cl, epollfd, nfn);
                 break;
 
             case CLTH_EMPTY:
@@ -365,6 +356,9 @@ static int64_t handle_clth_timeout(client_list* list, cl_timerheap* clth, int32_
 
 void* reg_thrd_routine(void* reg_thread_ctx)
 {
+    if (!thrd_startup_sync())
+        pthread_exit(NULL);
+
     zlog_put_mdc("thrd_id", "reg");
     net_fns* nfn = &g_server_cfg->networking_functions;
     reg_thrd_ctx* rt_ctx = (reg_thrd_ctx*)reg_thread_ctx;
@@ -386,6 +380,7 @@ void* reg_thrd_routine(void* reg_thread_ctx)
     if (res_del)
     {
         dzlog_fatal("Failed to prepare SQL statement for deletion. Cause: %s", sqlite3_errmsg(rt_ctx->db_rw_handle));
+        sqlite3_finalize(reg_stmt);
         pthread_exit(NULL);
     }
 
@@ -406,11 +401,11 @@ void* reg_thrd_routine(void* reg_thread_ctx)
         epoll_ctl(epollfd, EPOLL_CTL_ADD, ec_listener.fd, &ev_listener);
     }
 
-    client_list* list = list_create();
+    reg_client_list* list = list_create();
 
     cl_timerheap clth = {
-        .num_clients = 0, .num_slots = DEF_CL_ARR_SIZE,
-        .clients = (client**)xcalloc(DEF_CL_ARR_SIZE, sizeof(client*))
+        .num_clients = 0, .num_slots = DEF_CLTH_SIZE,
+        .clients = (reg_client**)xcalloc(DEF_CLTH_SIZE, sizeof(reg_client*))
     };
 
     struct epoll_event revents[1024];
@@ -480,6 +475,7 @@ bool process_reg_req(sqlite3* dbc, sqlite3_stmt* stmt, reg_req_group* req)
 
     req->username[UNAMESIZE - 1] = '\0';
     req->password[PWDSIZE - 1] = '\0';
+    normalize_string(req->username);
     unsigned char password_hash[SHA256_DIGEST_LENGTH];
     SHA256((const unsigned char*)req->password, strlen(req->password), password_hash);
     sqlite3_bind_text(stmt, i, req->username, -1, SQLITE_STATIC);
@@ -500,7 +496,7 @@ bool process_reg_req(sqlite3* dbc, sqlite3_stmt* stmt, reg_req_group* req)
     return true;
 }
 
-void reg_send_resp(client* cl, net_fns* nfn, uint32_t resp_type)
+void reg_send_resp(reg_client* cl, net_fns* nfn, uint32_t resp_type)
 {
     reg_resp resp = {.resp_code = htonl(resp_type)};
     nfn->send_fn(&cl->connection, &resp, sizeof(resp));

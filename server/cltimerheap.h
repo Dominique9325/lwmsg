@@ -4,7 +4,10 @@
 
 #ifndef LWMSG_CLTIMERHEAP_H
 #define LWMSG_CLTIMERHEAP_H
+#include <stdbool.h>
 #include "clhandle.h"
+
+#define DEF_CLTH_SIZE 256
 
 #define CLTH_EMPTY (-1)
 #define CLTH_TIMEOUT (-2)
@@ -12,6 +15,7 @@
 
 
 #define CLTH_REG_MAXPERM_TIME 4 // 4 s
+#define CLTH_AUTH_MAXPERM_TIME 4 // 4 s
 
 typedef struct cl_timerheap
 {

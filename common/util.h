@@ -13,4 +13,6 @@ typedef struct buffer
     uint32_t buf_data_offset;
 }buffer;
 
+void normalize_string(char* str);
+
 #endif //LWMSG_UTIL_H

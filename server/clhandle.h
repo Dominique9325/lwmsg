@@ -9,20 +9,21 @@
 #include <stdatomic.h>
 #include <netinet/in.h>
 #include <time.h>
+#include "thrdmsg_mpscq.h"
 #include "lwmp.h"
 #include "netwrap.h"
 #include "htable.h"
 #include "util.h"
 
-#define TMPBUF_SIZE 2048
-#define DEF_CL_ARR_SIZE 128
+#define TMPBUF_SIZE 4096
 #define INVAL_TH_IND (-1)
 
 enum epoll_type
 {
     EP_LISTENER,
     EP_EVENT,
-    EP_CLIENT
+    EP_CLIENT,
+    EP_QUEUE
 };
 
 typedef struct epoll_ctx
@@ -40,52 +41,59 @@ enum client_state
     REGISTERED
 };
 
-typedef struct user
+typedef struct curr_recv_msg
 {
-    node* next;
-    uint8_t thr_id;
-    ATOMIC uint8_t is_disconnected;
-    char username[UNAMESIZE];
-}user;
+    buffer recvbuf;
+    uint32_t expected_msg_size;
+    uint16_t msg_id;
+    uint16_t msg_type;
+}curr_recv_msg;
 
 typedef struct client
 {
     uint64_t ep_type; // MUST BE THE FIRST ELEMENT BECAUSE OF TYPE PUNNING
     conn connection;
-    user usr;
     int64_t timerheap_index;
     struct timespec auth_deadline;
-    buffer tmpbuf_recv;
-    buffer tmpbuf_send;
+    union
+    {
+        buffer tmpbuf_recv;
+        curr_recv_msg temp_recv_storage;
+    };
     in_addr_t peer_name;
     uint8_t cl_state;
 }client;
 
-typedef struct client_arr
+typedef client reg_client;
+
+typedef struct std_client
 {
-    client* clients;
-    uint64_t num_clients;
-    uint64_t num_slots;
-}client_arr;
+    client cl; // MUST BE THE FIRST ELEMENT BECAUSE OF TYPE PUNNING
+    mpsc_msg_queue pending_userdata_queue;
+    mpsc_msg_queue pending_ctrl_queue;
+    mpsc_msg_node* temp_send_storage;
+    node next;
+    ATOMIC bool is_disconnected;
+    char username[UNAMESIZE];
+    uint8_t owner_thrd_id;
+}std_client;
 
-typedef struct client_node
+typedef struct reg_client_node
 {
-    client cl;
-    struct client_node* next;
-}client_node;
+    reg_client cl;
+    struct reg_client_node* next;
+}reg_client_node;
 
-typedef client_node client_list;
+typedef reg_client_node reg_client_list;
 
-client_list* list_create();
+reg_client_list* list_create();
 
-void list_add(client_list* list, client_node* cl);
+void list_add(reg_client_list* list, reg_client_node* cl);
 
-void list_remove(client_list* list, client_node* cl);
+void list_remove(reg_client_list* list, reg_client_node* cl);
 
-void list_delete(client_list* list);
+void list_delete(reg_client_list* list);
 
-client* client_add(client_arr* arr, client* cl);
-
-void client_remove(client_arr* arr, client* cl);
+int32_t std_client_cmp(const void* cla, const void* clb, uint32_t lena, uint32_t lenb);
 
 #endif //LWMSG_CLHANDLE_H

@@ -14,8 +14,8 @@
 
 #define CFG_MAX_STRLEN 32
 #define MIN_NONPRIV_PORT 1024
-#define DEFAULT_CERT_CHAIN_PATH "cert_chain.pem"
-#define DEFAULT_PRIVATE_KEY_PATH "private_key.pem"
+#define DEFAULT_CERT_CHAIN_PATH "fullchain.cer"
+#define DEFAULT_PRIVATE_KEY_PATH "lwmsg.duckdns.org.key"
 #define DEFAULT_DB_FILE_PATH "database.db"
 #define DEFAULT_IP_WHITELIST_PATH "ip_whitelist.json"
 #define DEFAULT_IP_BLACKLIST_PATH "ip_blacklist.json"
@@ -33,13 +33,13 @@ X(uint16_t,                gen_port,                        7001,             UI
 X(uint16_t,                ctrl_port,                       MIN_NONPRIV_PORT, UINT16_MAX,  6777    ) \
 X(uint8_t,                 nr_worker_threads,               1,                128,         4       ) \
 X(uint8_t,                 cl_htable_size_pow2,             1,                21,          12      ) \
-X(uint8_t,                 cl_htable_expansion_pow2,        1,                12,          8       ) \
+X(uint8_t,                 cl_htable_expansion_pow2,        1,                12,          2       ) \
 X(uint8_t,                 cl_htable_loadfactor_exp_thres,  1,                UINT8_MAX,   70      ) \
-X(uint8_t,                 cl_htable_locks_pow2,            1,                32,          16      ) \
+X(uint8_t,                 cl_htable_locks_pow2,            1,                21,          12      ) \
 X(uint8_t,                 autoconf_nr_threads,             false,            true,        false   ) \
 X(uint8_t,                 use_tls,                         false,            true,        true    ) \
 X(uint8_t,                 use_auth,                        false,            true,        true    ) \
-X(ATOMIC uint8_t,          allow_registrations,              false,            true,        true    ) \
+X(ATOMIC uint8_t,          allow_registrations,              false,           true,        true    ) \
 X(ATOMIC uint8_t,          allow_file_transfers,            false,            true,        true    ) \
 X(ATOMIC uint8_t,          use_ip_whitelist,                false,            true,        false   )
 // type                       var name                    min value        max value     default value

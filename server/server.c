@@ -15,6 +15,8 @@
 #include "thrdctx.h"
 #include "netwrap.h"
 #include "registration.h"
+#include "worker.h"
+#include "xalloc.h"
 
 int main(int argc, char** argv)
 {
@@ -44,57 +46,97 @@ int main(int argc, char** argv)
         goto cfg_init_fail;
     }
 
+    int32_t shutdown_efd = eventfd(0, EFD_NONBLOCK);
+    if (shutdown_efd == ERROR)
+    {
+        dzlog_fatal("Failed to create flg_ev_shutdown");
+        goto cfg_init_fail;
+    }
+
     uint8_t num_worker_threads = g_server_cfg->autoconf_nr_threads ? get_nprocs() : g_server_cfg->nr_worker_threads;
     dzlog_info("Server will use %hhu worker threads.", num_worker_threads);
 
     reg_thrd_ctx* rt_ctx = NULL;
     striped_htable* whitelist = htable_create(IPBL_TBL_SIZE_POW2, IPBL_TBL_RESIZE_POW2,
                                               IPBL_TBL_THRES_LDFAC, IPBL_TBL_BKT_PER_LOCK_POW2, ip_cmp);
-    bool res = reg_ctx_init(&rt_ctx, ssl_ctx, whitelist);
+
+    striped_htable* std_ipblock_tbl = htable_create(IPBL_TBL_SIZE_POW2, IPBL_TBL_RESIZE_POW2,
+                                                    IPBL_TBL_THRES_LDFAC, IPBL_TBL_BKT_PER_LOCK_POW2, ip_cmp);
+
+    striped_htable* client_tbl = htable_create(g_server_cfg->cl_htable_size_pow2,
+                                               g_server_cfg->cl_htable_expansion_pow2,
+                                               g_server_cfg->cl_htable_loadfactor_exp_thres,
+                                               g_server_cfg->cl_htable_locks_pow2,
+                                               std_client_cmp);
+
+    bool res = reg_ctx_init(&rt_ctx, ssl_ctx, whitelist, shutdown_efd);
     if (!res)
     {
-        dzlog_fatal("Registration thread initialization failed. Aborting.");
-        goto reg_thrd_init_fail;
+        dzlog_fatal("Registration thread context init failed. Aborting.");
+        goto reg_thrd_ctx_init_fail;
     }
 
+    worker_thrd_ctx* wt_ctx;
+    uint8_t wrk_init_cnt = worker_ctx_init(&wt_ctx, num_worker_threads, ssl_ctx, client_tbl,
+                                            std_ipblock_tbl, whitelist, shutdown_efd);
+    if (wrk_init_cnt < num_worker_threads)
+    {
+        dzlog_fatal("Worker context init failed. Stopped at %hhu out of %hhu worker contexts.", wrk_init_cnt, num_worker_threads);
+        goto wrk_thrd_ctx_init_fail;
+    }
 
     whitelist_rec* wr = whitelist_rec_create(inet_addr("127.0.0.1"));
     htable_add(whitelist, &wr->nd);
+
     pthread_t reg_thrd;
     int32_t tr_lnch_res = pthread_create(&reg_thrd, NULL, reg_thrd_routine, rt_ctx);
-     if (tr_lnch_res)
-     {
-         dzlog_fatal("Failed to start registration thread. Cause: %s", strerror(errno));
-         goto reg_thrd_init_fail;
-     }
+    pthread_t* wrk_thrds = (pthread_t*)xmalloc(num_worker_threads * sizeof(pthread_t));
+    uint8_t i;
+    for (i = 0; i < num_worker_threads; i++)
+    {
+        if (pthread_create(&wrk_thrds[i], NULL, worker_thrd_routine, &wt_ctx[i]))
+            break;
+    }
+
+    if (!coord_thrd_startup_sync(!tr_lnch_res && i == num_worker_threads))
+    {
+        dzlog_fatal("Failed to launch all threads. Aborting.");
+        goto thrd_startup_failed;
+    }
+
+
 
     sleep(10);
-    eventfd_t evvv = 43;
     //__atomic_store_n(&g_server_cfg->allow_regisrations, false, memory_order_seq_cst);
-    //write(rt_ctx->flg_shutdown, &evvv, sizeof(eventfd_t));
+    //eventfd_write(shutdown_efd, 1);
     // sleep(5);
     // //__atomic_store_n(&g_server_cfg->allow_regisrations, true, memory_order_seq_cst);
     // write(rt_ctx->flg_reg_changed, &evvv, sizeof(eventfd_t));
-    void* retval;
-    pthread_join(reg_thrd, &retval);
-
-    // accpt_thrd_ctx* at_ctx;
-    // worker_thrd_ctx* wt_ctx[num_worker_threads];
-
-    // worker_ctx_init(wt_ctx, num_worker_threads);
-    // accpt_ctx_init(&at_ctx);
-    // int32_t ctrl_sock_fd = server_start_tcp(INADDR_LOOPBACK, g_server_cfg->ctrl_port, 1, false);
-    //fcntl(ctrl_sock_fd, F_SETFL, O_NONBLOCK);
-    // struct pollfd ctrl_pfd = {.fd = ctrl_sock_fd, .events = POLLIN, .revents = 0};
     prog_retval = 0;
-    reg_thrd_init_fail:
+
+    thrd_startup_failed:
+    if (!tr_lnch_res)
+        pthread_join(reg_thrd, NULL);
+    for (uint8_t j = 0; j < i; j++)
+        pthread_join(wrk_thrds[j], NULL);
+    free(wrk_thrds);
+
+    wrk_thrd_ctx_init_fail:
+    worker_ctx_free(&wt_ctx, wrk_init_cnt);
+    htable_delete(client_tbl);
+    htable_delete(std_ipblock_tbl);
+
+    reg_thrd_ctx_init_fail:
     reg_ctx_free(&rt_ctx);
     htable_delete(whitelist);
+    close(shutdown_efd);
     dzlog_notice("Shutting down server.");
+
     cfg_init_fail:
     zlog_fini();
     if (ssl_ctx)
         SSL_CTX_free(ssl_ctx);
+
     zlog_init_fail:
     save_cfg(cfg_path);
     free(g_server_cfg);

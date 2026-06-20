@@ -40,7 +40,9 @@ add_executable(lwmsg-server server/server.c
         common/util.c
         common/util.h
         server/worker.c
-        server/worker.h)
+        server/worker.h
+        server/thrdmsg_mpscq.c
+        server/thrdmsg_mpscq.h)
 add_executable(lwmsg-client client/client.c
         common/netwrap.c
         common/netwrap.h

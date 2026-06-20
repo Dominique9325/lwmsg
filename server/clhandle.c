@@ -5,13 +5,13 @@
 #include "clhandle.h"
 #include "xalloc.h"
 
-client_list* list_create()
+reg_client_list* list_create()
 {
-    client_list* list = (client_list*)xcalloc(1, sizeof(client_list));
+    reg_client_list* list = (reg_client_list*)xcalloc(1, sizeof(reg_client_list));
     return list;
 }
 
-void list_add(client_list* list, client_node* cl)
+void list_add(reg_client_list* list, reg_client_node* cl)
 {
     cl->next = NULL;
 
@@ -25,13 +25,13 @@ void list_add(client_list* list, client_node* cl)
     list->next = cl;
 }
 
-void list_remove(client_list* list, client_node* cl)
+void list_remove(reg_client_list* list, reg_client_node* cl)
 {
     if (!list->next || !cl)
         return;
 
-    client_node* curr = list->next;
-    client_node* prev = NULL;
+    reg_client_node* curr = list->next;
+    reg_client_node* prev = NULL;
 
     while (curr && cl != curr)
     {
@@ -50,23 +50,10 @@ void list_remove(client_list* list, client_node* cl)
     cl->next = NULL;
 }
 
-client* client_add(client_arr* arr, client* cl)
+int32_t std_client_cmp(const void* cla, const void* clb, uint32_t lena, uint32_t lenb)
 {
-    if (arr->num_clients == arr->num_slots)
-    {
-        arr->num_slots <<= 1ULL;
-        arr->clients = xrealloc(arr->clients, arr->num_slots * sizeof(client));
-    }
-
-    client* dest = &arr->clients[arr->num_clients++];
-    *dest = *cl;
-    return dest;
-}
-
-void client_remove(client_arr* arr, client* cl)
-{
-    client tmp = arr->clients[arr->num_clients - 1];
-    arr->clients[arr->num_clients - 1] = *cl;
-    *cl = tmp;
-    arr->num_clients--;
+    const char* unamea = (const char*)cla;
+    const char* unameb = (const char*)clb;
+    int32_t res = strncmp(unamea, unameb, lena < lenb ? lena : lenb);
+    return res;
 }

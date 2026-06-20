@@ -455,6 +455,16 @@ node *htable_get(striped_htable *htable, const void *key, uint32_t len, bool ref
     return target;
 }
 
+node* htable_get_cond(striped_htable* htable, const void* key, uint32_t len, bool(*cond_fn)(node* nd))
+{
+    node* nd = htable_get(htable, key, len, true);
+    if (cond_fn(nd))
+        return nd;
+
+    node_put(nd);
+    return NULL;
+}
+
 
 void node_get(node *n)
 {

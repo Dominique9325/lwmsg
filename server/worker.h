@@ -6,3 +6,5 @@
 #define LWMSG_WORKER_H
 
 #endif //LWMSG_WORKER_H
+
+void* worker_thrd_routine(void* worker_thread_ctx);
