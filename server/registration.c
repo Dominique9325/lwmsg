@@ -6,9 +6,7 @@
 #include <sys/socket.h>
 #include <sys/epoll.h>
 #include <arpa/inet.h>
-#include <assert.h>
 #include <unistd.h>
-#include <openssl/sha.h>
 #include <errno.h>
 #include <fcntl.h>
 #include "zlog.h"
@@ -21,9 +19,9 @@
 #include "misc.h"
 #include "xalloc.h"
 #include "ipblock.h"
+#include "dbops.h"
 
-#define REG_QUERY "INSERT INTO users (username, password_sha256) VALUES (:username, :password_sha256)"
-#define DEL_QUERY "DELETE FROM users WHERE username = :username AND password_sha256 = :password_sha256"
+
 #define MAX_REVENTS 1024
 
 static void cleanup_reg_client(reg_client_list* list, cl_timerheap* clth, reg_client_node* pcln, int32_t epollfd, net_fns* nfn)
@@ -48,7 +46,7 @@ static void handle_flg_reg_changed(epoll_ctx* p_ec_reg_changed, epoll_ctx* p_ec_
 
     if (flg_reg && p_ec_listener->fd == -1)
     {
-        p_ec_listener->fd = server_start_tcp(inet_addr(g_server_cfg->gen_interface), g_server_cfg->reg_port, 128, true);
+        p_ec_listener->fd = server_start_tcp(inet_addr(g_server_cfg->gen_interface), g_server_cfg->reg_port, 128, true, false);
         p_ev_listener->data.ptr = p_ec_listener;
         epoll_ctl(epollfd, EPOLL_CTL_ADD, p_ec_listener->fd, p_ev_listener);
     }
@@ -97,8 +95,8 @@ static void track_new_client(reg_client_list* list, cl_timerheap* clth, reg_clie
 {
     reg_client_node* cln = (reg_client_node*)xmalloc(sizeof(reg_client_node));
     memcpy(&cln->cl, cl, sizeof(*cl));
-    cln->cl.tmpbuf_recv.buf = (char*)xmalloc(sizeof(reg_req_group));
-    cln->cl.tmpbuf_recv.buf_size = sizeof(reg_req_group);
+    cln->cl.tmpbuf_recv.buf = (char*)xmalloc(sizeof(auth_req_group));
+    cln->cl.tmpbuf_recv.buf_size = sizeof(auth_req_group);
     cln->cl.timerheap_index = INVAL_TH_IND;
     fcntl(cln->cl.connection.sock_fd, F_SETFL, O_NONBLOCK);
     list_add(list, cln);
@@ -107,7 +105,7 @@ static void track_new_client(reg_client_list* list, cl_timerheap* clth, reg_clie
 
     if (acceptres == ACCPT_DONE)
     {
-        cln->cl.cl_state = ACCEPTED;
+        __atomic_store_n(&cln->cl.cl_state, ACCEPTED, memory_order_seq_cst);
         clock_gettime(CLOCK_MONOTONIC, &cln->cl.auth_deadline);
         cln->cl.auth_deadline.tv_sec += CLTH_REG_MAXPERM_TIME;
         cl_timerheap_add(clth, &cln->cl);
@@ -221,10 +219,10 @@ static void reg_handle_disconnect(reg_client_list* list, cl_timerheap* clth, reg
     {
         uint32_t avail_data = nfn->avail_data_fn(&pcln->cl.connection);
         uint32_t offset = pcln->cl.tmpbuf_recv.buf_data_offset;
-        if (offset + avail_data == sizeof(reg_req_group))
+        if (offset + avail_data == sizeof(auth_req_group))
         {
             nfn->recv_fn(&pcln->cl.connection, pcln->cl.tmpbuf_recv.buf + offset, avail_data);
-            reg_req_group* req = (reg_req_group*)pcln->cl.tmpbuf_recv.buf;
+            auth_req_group* req = (auth_req_group*)pcln->cl.tmpbuf_recv.buf;
             uint32_t request_type = ntohl(req->request_type);
             sqlite3_stmt* request_stmt = NULL;
             if (request_type == REQ_DELETION)
@@ -257,7 +255,7 @@ static void handle_client_event(reg_client_list* list, cl_timerheap* clth, struc
         return;
     }
 
-    if (pcln->cl.cl_state == ACCEPTING)
+    if (__atomic_load_n(&pcln->cl.cl_state, memory_order_seq_cst) == ACCEPTING)
     {
         int32_t ares = nfn->accept_fn(&pcln->cl.connection, rt_ctx->ssl_ctx);
         if (ares == ERROR)
@@ -268,7 +266,7 @@ static void handle_client_event(reg_client_list* list, cl_timerheap* clth, struc
         }
         else if (ares == ACCPT_DONE)
         {
-            pcln->cl.cl_state = ACCEPTED;
+            __atomic_store_n(&pcln->cl.cl_state, ACCEPTED, memory_order_seq_cst);
             struct epoll_event ev_cl = {.data.ptr = pcln, .events = EPOLLIN};
             epoll_ctl(epollfd, EPOLL_CTL_MOD, pcln->cl.connection.sock_fd, &ev_cl);
         }
@@ -276,10 +274,10 @@ static void handle_client_event(reg_client_list* list, cl_timerheap* clth, struc
     else
     {
         uint32_t curr_data_len = pcln->cl.tmpbuf_recv.buf_data_offset;
-        if (curr_data_len < sizeof(reg_req_group))
+        if (curr_data_len < sizeof(auth_req_group))
         {
             int32_t data_recved = (int32_t)nfn->recv_fn(&pcln->cl.connection, pcln->cl.tmpbuf_recv.buf + curr_data_len,
-                                                        sizeof(reg_req_group) - curr_data_len);
+                                                        sizeof(auth_req_group) - curr_data_len);
 
             if (data_recved < 1)
             {
@@ -290,9 +288,9 @@ static void handle_client_event(reg_client_list* list, cl_timerheap* clth, struc
                 return;
             }
             pcln->cl.tmpbuf_recv.buf_data_offset += data_recved;
-            if (pcln->cl.tmpbuf_recv.buf_data_offset == sizeof(reg_req_group))
+            if (pcln->cl.tmpbuf_recv.buf_data_offset == sizeof(auth_req_group))
             {
-                reg_req_group* req = (reg_req_group*)pcln->cl.tmpbuf_recv.buf;
+                auth_req_group* req = (auth_req_group*)pcln->cl.tmpbuf_recv.buf;
                 req->request_type = ntohl(req->request_type);
                 sqlite3_stmt* request_stmt = NULL;
                 switch (req->request_type)
@@ -317,8 +315,8 @@ static void handle_client_event(reg_client_list* list, cl_timerheap* clth, struc
                 if (request_stmt == reg_stmt || !request_result)
                     manage_reg_ipbr(rt_ctx, pcln, ripb_reason);
 
-                uint32_t resp_code = request_result ? REG_RESP_OK : (request_stmt ? REG_RESP_INVAL_PARAM : REG_RESP_INVAL_REQ);
-                reg_send_resp(&pcln->cl, nfn, resp_code);
+                uint32_t resp_code = request_result ? AUTH_RESP_OK : (request_stmt ? AUTH_RESP_INVAL_PARAM : AUTH_RESP_INVAL_REQ);
+                req_send_resp(&pcln->cl, nfn, resp_code);
                 cleanup_reg_client(list, clth, pcln, epollfd, nfn);
             }
         }
@@ -329,7 +327,7 @@ static int64_t handle_clth_timeout(reg_client_list* list, cl_timerheap* clth, in
 {
     while (true)
     {
-        int64_t timediff = cl_timerheap_compute_root_timediff(clth, CLTH_REG_MAXPERM_TIME);
+        int64_t timediff = cl_timerheap_compute_root_timediff(clth, ACCEPTED);
         reg_client* cl = NULL;
 
         switch (timediff)
@@ -340,7 +338,7 @@ static int64_t handle_clth_timeout(reg_client_list* list, cl_timerheap* clth, in
 
             case CLTH_TIMEOUT:
                 cl = cl_timerheap_pop(clth);
-                reg_send_resp(cl, nfn, REG_RESP_TIMEOUT);
+                req_send_resp(cl, nfn, AUTH_RESP_TIMEOUT);
                 cleanup_reg_client(list, clth, (reg_client_node*)cl, epollfd, nfn);
                 break;
 
@@ -368,6 +366,14 @@ void* reg_thrd_routine(void* reg_thread_ctx)
     epoll_ctx ec_shutdown = {.type = EP_EVENT, .fd = rt_ctx->flg_shutdown};
     epoll_ctx ec_listener = {.type = EP_LISTENER, .fd = -1};
 
+    int32_t epollfd = epoll_create1(0);
+    if (epollfd == ERROR)
+    {
+        dzlog_fatal("Failed to create an epoll instance.");
+        pthread_exit(NULL);
+    }
+
+
 
     int32_t res_reg = sqlite3_prepare_v2(rt_ctx->db_rw_handle, REG_QUERY, -1, &reg_stmt, NULL);
     if (res_reg)
@@ -384,10 +390,6 @@ void* reg_thrd_routine(void* reg_thread_ctx)
         pthread_exit(NULL);
     }
 
-    int32_t epollfd = epoll_create1(0);
-    if (epollfd == ERROR)
-        pthread_exit(NULL);
-
     struct epoll_event ev_listener = {.events = EPOLLIN, .data.ptr = &ec_listener};
     struct epoll_event ev_reg_changed = {.events = EPOLLIN, .data.ptr = &ec_reg_changed};
     struct epoll_event ev_shutdown = {.events = EPOLLIN, .data.ptr = &ec_shutdown};
@@ -397,7 +399,7 @@ void* reg_thrd_routine(void* reg_thread_ctx)
 
     if (__atomic_load_n(&g_server_cfg->allow_registrations, memory_order_seq_cst))
     {
-        ec_listener.fd = server_start_tcp(inet_addr(g_server_cfg->gen_interface), g_server_cfg->reg_port, 128, true);
+        ec_listener.fd = server_start_tcp(inet_addr(g_server_cfg->gen_interface), g_server_cfg->reg_port, 128, true, false);
         epoll_ctl(epollfd, EPOLL_CTL_ADD, ec_listener.fd, &ev_listener);
     }
 
@@ -455,49 +457,4 @@ void* reg_thrd_routine(void* reg_thread_ctx)
             }
         }
     }
-}
-
-
-
-
-bool process_reg_req(sqlite3* dbc, sqlite3_stmt* stmt, reg_req_group* req)
-{
-    assert(dbc && stmt && req);
-
-    sqlite3_reset(stmt);
-    int32_t i = sqlite3_bind_parameter_index(stmt, ":username");
-    int32_t j = sqlite3_bind_parameter_index(stmt, ":password_sha256");
-    if (!i || !j)
-    {
-        dzlog_error("Improperly prepared SQL statement. Cause: %s", sqlite3_errmsg(dbc));
-        return false;
-    }
-
-    req->username[UNAMESIZE - 1] = '\0';
-    req->password[PWDSIZE - 1] = '\0';
-    normalize_string(req->username);
-    unsigned char password_hash[SHA256_DIGEST_LENGTH];
-    SHA256((const unsigned char*)req->password, strlen(req->password), password_hash);
-    sqlite3_bind_text(stmt, i, req->username, -1, SQLITE_STATIC);
-    sqlite3_bind_blob(stmt, j, password_hash, SHA256_DIGEST_LENGTH, SQLITE_STATIC);
-    int32_t res = sqlite3_step(stmt);
-
-    if (res != SQLITE_DONE)
-    {
-        dzlog_notice("Failed to execute query. Cause: %s", sqlite3_errmsg(dbc));
-        return false;
-    }
-    else if (!sqlite3_changes(dbc))
-    {
-        dzlog_notice("Failed to delete account. Invalid username or password.");
-        return false;
-    }
-    dzlog_info("Successfully %s user %s", req->request_type == REQ_DELETION ? "deleted" : "created", req->username);
-    return true;
-}
-
-void reg_send_resp(reg_client* cl, net_fns* nfn, uint32_t resp_type)
-{
-    reg_resp resp = {.resp_code = htonl(resp_type)};
-    nfn->send_fn(&cl->connection, &resp, sizeof(resp));
 }

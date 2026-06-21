@@ -15,11 +15,14 @@
 
 #define IP4DOT(be_addr) be_addr >> 24, be_addr >> 16 & 0xFF, be_addr >> 8 & 0xFF, be_addr & 0xFF
 
-int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backlog, bool nonblock)
+int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backlog, bool nonblock, bool reuse_port)
 {
     int32_t sock = socket(AF_INET, SOCK_STREAM | (nonblock ? SOCK_NONBLOCK : 0), IPPROTO_TCP);
     if (sock == ERROR)
         return ERROR;
+
+    if (reuse_port)
+        setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &reuse_port, sizeof(reuse_port));
 
     struct sockaddr_in addr = {.sin_addr.s_addr = be_inet4addr, .sin_port = htons(le_port), .sin_family = AF_INET};
     int res = bind(sock, (struct sockaddr*)&addr, sizeof(addr));

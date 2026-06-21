@@ -8,6 +8,7 @@
 #include "clhandle.h"
 
 #define DEF_CLTH_SIZE 256
+#define INVAL_TH_IND (-1)
 
 #define CLTH_EMPTY (-1)
 #define CLTH_TIMEOUT (-2)
@@ -28,7 +29,7 @@ bool cl_timerheap_add(cl_timerheap* heap, client* cl);
 
 client* cl_timerheap_peek(cl_timerheap* heap);
 
-int64_t cl_timerheap_compute_root_timediff(cl_timerheap* heap, int64_t max_perm_timediff);
+int64_t cl_timerheap_compute_root_timediff(cl_timerheap* heap, uint8_t target_state);
 
 client* cl_timerheap_pop(cl_timerheap* heap);
 

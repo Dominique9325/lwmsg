@@ -5,6 +5,8 @@
 #include "clhandle.h"
 #include "xalloc.h"
 
+uint64_t curr_msg_id = 0;
+
 reg_client_list* list_create()
 {
     reg_client_list* list = (reg_client_list*)xcalloc(1, sizeof(reg_client_list));
@@ -56,4 +58,10 @@ int32_t std_client_cmp(const void* cla, const void* clb, uint32_t lena, uint32_t
     const char* unameb = (const char*)clb;
     int32_t res = strncmp(unamea, unameb, lena < lenb ? lena : lenb);
     return res;
+}
+
+void req_send_resp(client* cl, net_fns* nfn, uint32_t resp_type)
+{
+    auth_resp resp = {.resp_code = htonl(resp_type)};
+    nfn->send_fn(&cl->connection, &resp, sizeof(resp));
 }

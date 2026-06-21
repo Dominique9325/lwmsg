@@ -108,7 +108,9 @@ client* cl_timerheap_peek(cl_timerheap* heap)
     return NULL;
 }
 
-int64_t cl_timerheap_compute_root_timediff(cl_timerheap* heap, int64_t max_perm_timediff)
+
+/*Note: target_state indicates the state a client must NOT be in after CLTH_X_MAXPERM_TIME (being in that state still means a timeout). */
+int64_t cl_timerheap_compute_root_timediff(cl_timerheap* heap, uint8_t target_state)
 {
     client* cl = cl_timerheap_peek(heap);
     if (!cl)
@@ -117,7 +119,7 @@ int64_t cl_timerheap_compute_root_timediff(cl_timerheap* heap, int64_t max_perm_
     struct timespec curr_timestamp;
     clock_gettime(CLOCK_MONOTONIC, &curr_timestamp);
     int64_t timediff_sec = cl->auth_deadline.tv_sec - curr_timestamp.tv_sec;
-    if (cl->cl_state == REGISTERED)
+    if (__atomic_load_n(&cl->cl_state, memory_order_seq_cst) != target_state)
         return CLTH_NOT_APPLICABLE;
 
     if (timediff_sec <= 0)

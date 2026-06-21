@@ -7,28 +7,33 @@
 #include <stdint.h>
 #define UNAMESIZE 32
 #define PWDSIZE 20
-#define REQ_REGISTRATION 0x1FE32976U
-#define REQ_DELETION 0xDE1059BCU
 
-enum reg_resp_code
+enum req_type
 {
-    REG_RESP_OK = 0x51CEF28DU,
-    REG_RESP_INVAL_REQ = 0x23A80DBFU,
-    REG_RESP_INVAL_PARAM = 0x128CE6DAU,
-    REG_RESP_TIMEOUT = 0x7F0CDE45U
+    REQ_REGISTRATION = 0x1FE32976U,
+    REQ_DELETION =  0xDE1059BCU,
+    REQ_AUTHENTICATION = 0xF68C104AU
 };
 
-typedef struct reg_req_group
+enum auth_req_resp_code
+{
+    AUTH_RESP_OK = 0x51CEF28DU,
+    AUTH_RESP_INVAL_REQ = 0x23A80DBFU,
+    AUTH_RESP_INVAL_PARAM = 0x128CE6DAU,
+    AUTH_RESP_TIMEOUT = 0x7F0CDE45U
+};
+
+typedef struct auth_req_group
 {
     uint32_t request_type;
     char username[UNAMESIZE];
-    char password[20];
-}reg_req_group;
+    char password[PWDSIZE];
+}auth_req_group;
 
-typedef struct reg_resp
+typedef struct auth_resp
 {
     uint32_t resp_code;
-}reg_resp;
+}auth_resp;
 
 
 #endif //LWMSG_LWMP_H

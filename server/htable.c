@@ -393,12 +393,12 @@ void htable_remove(striped_htable *htable, const void *key, uint32_t key_size)
         goto exit;
     else if (!prev)
     {
-        *bucket = current->next;
+        *bucket = current->next; // NOLINT
         current->next = NULL;
     }
     else
     {
-        prev->next = current->next;
+        prev->next = current->next; // NOLINT
         current->next = NULL;
     }
 

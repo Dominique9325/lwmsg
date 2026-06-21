@@ -42,7 +42,9 @@ add_executable(lwmsg-server server/server.c
         server/worker.c
         server/worker.h
         server/thrdmsg_mpscq.c
-        server/thrdmsg_mpscq.h)
+        server/thrdmsg_mpscq.h
+        server/dbops.c
+        server/dbops.h)
 add_executable(lwmsg-client client/client.c
         common/netwrap.c
         common/netwrap.h

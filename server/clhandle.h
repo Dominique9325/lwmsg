@@ -16,7 +16,8 @@
 #include "util.h"
 
 #define TMPBUF_SIZE 4096
-#define INVAL_TH_IND (-1)
+#define DEF_STDCL_DCONARR_SIZE 256
+
 
 enum epoll_type
 {
@@ -34,12 +35,19 @@ typedef struct epoll_ctx
 
 enum client_state
 {
+    // shared states (reg client and std client)
     ACCEPTING,
     ACCEPTED,
-    AUTHENTICATING,
-    AUTHENTICATED,
-    REGISTERED
+    DISCONNECTED,
+
+    // reg client only
+    REGISTERED,
+
+    // std client only
+    AUTHENTICATED
 };
+
+extern uint64_t curr_msg_id;
 
 typedef struct curr_recv_msg
 {
@@ -61,7 +69,7 @@ typedef struct client
         curr_recv_msg temp_recv_storage;
     };
     in_addr_t peer_name;
-    uint8_t cl_state;
+    ATOMIC uint8_t cl_state;
 }client;
 
 typedef client reg_client;
@@ -72,8 +80,7 @@ typedef struct std_client
     mpsc_msg_queue pending_userdata_queue;
     mpsc_msg_queue pending_ctrl_queue;
     mpsc_msg_node* temp_send_storage;
-    node next;
-    ATOMIC bool is_disconnected;
+    node nd;
     char username[UNAMESIZE];
     uint8_t owner_thrd_id;
 }std_client;
@@ -95,5 +102,7 @@ void list_remove(reg_client_list* list, reg_client_node* cl);
 void list_delete(reg_client_list* list);
 
 int32_t std_client_cmp(const void* cla, const void* clb, uint32_t lena, uint32_t lenb);
+
+void req_send_resp(client* cl, net_fns* nfn, uint32_t resp_type);
 
 #endif //LWMSG_CLHANDLE_H

@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <signal.h>
 #include <arpa/inet.h>
 #include <sys/sysinfo.h>
 #include "ipblock.h"
@@ -20,6 +21,7 @@
 
 int main(int argc, char** argv)
 {
+    signal(SIGPIPE, SIG_IGN);
     int32_t prog_retval = ERROR;
     char* cfg_path = getopt(argc, argv, "c:") != -1 ? optarg : "config.json"; // TBR: If I need more CLI args.
     load_cfg(cfg_path);

@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "ipblock.h"
+
+#include "cltimerheap.h"
 #include "xalloc.h"
 
 static void ripbr_free(node* nd)
@@ -66,6 +68,44 @@ reg_ipb_rec* reg_ipb_rec_create(in_addr_t peer_name, uint8_t rec_reason)
 
     reg_ipb_rec* rec = (reg_ipb_rec*)xmalloc(sizeof(reg_ipb_rec));
     memcpy(rec, &temp, sizeof(reg_ipb_rec));
+    rec->nd.key = &rec->ip_addr;
+    return rec;
+}
+
+static void std_ipb_rec_free(node* node)
+{
+    std_ipb_rec* rec = node_container_of(std_ipb_rec, nd, node);
+    free(rec);
+}
+
+uint8_t chk_std_block(std_ipb_rec* stdipbr)
+{
+    if (stdipbr->is_manual)
+        return BLOCKED;
+
+    struct timespec curr_timestamp;
+    clock_gettime(CLOCK_MONOTONIC, &curr_timestamp);
+
+    if (curr_timestamp.tv_sec - stdipbr->timestamp.tv_sec >= AUTHBLOCK_EXPIRY)
+        return REC_EXPIRED;
+    else if (stdipbr->failed_auths >= AUTHBLOCK_FAIL_THRES)
+        return BLOCKED;
+
+    return NOT_BLOCKED;
+}
+
+std_ipb_rec* std_ipb_rec_create(in_addr_t peer_name, bool is_manual)
+{
+    std_ipb_rec temp = {
+        .failed_auths = is_manual ? 0 : 1,
+        .ip_addr = peer_name,
+        .nd = {.next = NULL, .ref_cnt = 1, .free_fn = std_ipb_rec_free, .key_size = sizeof(peer_name)},
+        .is_manual = is_manual
+    };
+    std_ipb_rec* rec = xmalloc(sizeof(std_ipb_rec));
+    memcpy(rec, &temp, sizeof(std_ipb_rec));
+    clock_gettime(CLOCK_MONOTONIC, &rec->timestamp);
+    rec->timestamp.tv_sec += AUTHBLOCK_EXPIRY;
     rec->nd.key = &rec->ip_addr;
     return rec;
 }

@@ -11,7 +11,10 @@
 
 #define REGBLOCK_FAIL_THRES 5 // 5
 #define REGBLOCK_SUCC_THRES 1 // 1
+#define AUTHBLOCK_FAIL_THRES 5
+
 #define REGBLOCK_EXPIRY 7200 // 2 h
+#define AUTHBLOCK_EXPIRY 3600 // 1 h
 
 #define NOT_BLOCKED 0
 #define BLOCKED 1
@@ -39,6 +42,15 @@ typedef struct reg_ipb_rec
     const bool is_manual;
 }reg_ipb_rec;
 
+typedef struct std_ipb_rec
+{
+    node nd;
+    struct timespec timestamp;
+    in_addr_t ip_addr;
+    uint8_t failed_auths;
+    const bool is_manual;
+}std_ipb_rec;
+
 typedef struct whitelist_rec
 {
     node nd;
@@ -47,9 +59,13 @@ typedef struct whitelist_rec
 
 uint8_t chk_reg_block(reg_ipb_rec* ripbr);
 
+uint8_t chk_std_block(std_ipb_rec* stdipbr);
+
 reg_ipb_rec* reg_ipb_rec_create(in_addr_t peer_name, uint8_t rec_reason);
 
 whitelist_rec* whitelist_rec_create(in_addr_t peer_name);
+
+std_ipb_rec* std_ipb_rec_create(in_addr_t peer_name, bool is_manual);
 
 int32_t ip_cmp(const void* a, const void* b, uint32_t lena, uint32_t lenb);
 

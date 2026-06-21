@@ -30,7 +30,7 @@ typedef struct net_fns
 }net_fns;
 
 
-int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backlog, bool nonblock);
+int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backlog, bool nonblock, bool reuse_port);
 
 // Plain TCP networking function wrappers:
 int32_t accept_tcp(conn* c, SSL_CTX* ssl_ctx);
