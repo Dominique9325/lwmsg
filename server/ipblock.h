@@ -16,14 +16,17 @@
 #define REGBLOCK_EXPIRY 7200 // 2 h
 #define AUTHBLOCK_EXPIRY 3600 // 1 h
 
-#define NOT_BLOCKED 0
-#define BLOCKED 1
-#define REC_EXPIRED 2
-
 #define IPBL_TBL_SIZE_POW2 10
 #define IPBL_TBL_RESIZE_POW2 1
 #define IPBL_TBL_BKT_PER_LOCK_POW2 10
 #define IPBL_TBL_THRES_LDFAC 100
+
+enum record_status
+{
+    RS_NOT_BLOCKED,
+    RS_BLOCKED,
+    RS_EXPIRED
+};
 
 enum record_reason
 {
@@ -47,7 +50,7 @@ typedef struct std_ipb_rec
     node nd;
     struct timespec timestamp;
     in_addr_t ip_addr;
-    uint8_t failed_auths;
+    ATOMIC uint8_t failed_auths;
     const bool is_manual;
 }std_ipb_rec;
 

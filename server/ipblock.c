@@ -11,24 +11,24 @@
 
 static void ripbr_free(node* nd)
 {
-    reg_ipb_rec* rec = node_container_of(reg_ipb_rec, nd, nd);
+    reg_ipb_rec* rec = container_of(reg_ipb_rec, nd, nd);
     free(rec);
 }
 
 uint8_t chk_reg_block(reg_ipb_rec* ripbr)
 {
     if (ripbr->is_manual)
-        return BLOCKED;
+        return RS_BLOCKED;
 
     struct timespec curr_timestamp;
     clock_gettime(CLOCK_MONOTONIC, &curr_timestamp);
 
     if (curr_timestamp.tv_sec - ripbr->timestamp.tv_sec >= REGBLOCK_EXPIRY)
-        return REC_EXPIRED;
+        return RS_EXPIRED;
     else if (ripbr->failed_regs >= REGBLOCK_FAIL_THRES || ripbr->succ_regs >= REGBLOCK_SUCC_THRES)
-        return BLOCKED;
+        return RS_BLOCKED;
 
-    return NOT_BLOCKED;
+    return RS_NOT_BLOCKED;
 }
 
 int32_t ip_cmp(const void* a, const void* b, uint32_t lena, uint32_t lenb)
@@ -74,24 +74,24 @@ reg_ipb_rec* reg_ipb_rec_create(in_addr_t peer_name, uint8_t rec_reason)
 
 static void std_ipb_rec_free(node* node)
 {
-    std_ipb_rec* rec = node_container_of(std_ipb_rec, nd, node);
+    std_ipb_rec* rec = container_of(std_ipb_rec, nd, node);
     free(rec);
 }
 
 uint8_t chk_std_block(std_ipb_rec* stdipbr)
 {
     if (stdipbr->is_manual)
-        return BLOCKED;
+        return RS_BLOCKED;
 
     struct timespec curr_timestamp;
     clock_gettime(CLOCK_MONOTONIC, &curr_timestamp);
 
     if (curr_timestamp.tv_sec - stdipbr->timestamp.tv_sec >= AUTHBLOCK_EXPIRY)
-        return REC_EXPIRED;
+        return RS_EXPIRED;
     else if (stdipbr->failed_auths >= AUTHBLOCK_FAIL_THRES)
-        return BLOCKED;
+        return RS_BLOCKED;
 
-    return NOT_BLOCKED;
+    return RS_NOT_BLOCKED;
 }
 
 std_ipb_rec* std_ipb_rec_create(in_addr_t peer_name, bool is_manual)
@@ -112,7 +112,7 @@ std_ipb_rec* std_ipb_rec_create(in_addr_t peer_name, bool is_manual)
 
 static void whitelist_rec_free(node* node)
 {
-    whitelist_rec* rec = node_container_of(whitelist_rec, nd, node);
+    whitelist_rec* rec = container_of(whitelist_rec, nd, node);
     free(rec);
 }
 

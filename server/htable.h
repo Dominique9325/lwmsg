@@ -5,12 +5,15 @@
 #ifndef LWMSG_HTABLE_H
 #define LWMSG_HTABLE_H
 #include <stdint.h>
+#include <stdbool.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include "misc.h"
 
-#define node_container_of(parent_type, member_name, member_ptr) \
+#define container_of(parent_type, member_name, member_ptr) \
     (parent_type *)((char *)(member_ptr) - offsetof(parent_type, member_name))
+
+typedef struct node dummy_node;
 
 typedef struct node node;
 
@@ -22,12 +25,19 @@ typedef int(*cmp_func)(const void* a, const void* b, uint32_t lena, uint32_t len
 
 struct node
 {
-    const void* key;
-    const free_func free_fn;
+    void* key;
+    free_func free_fn;
     node* next;
-    const uint32_t key_size;
+    uint32_t key_size;
     ATOMIC uint32_t ref_cnt;
 };
+
+typedef struct node_arr
+{
+    node** nodes;
+    uint32_t size;
+    uint32_t elem_cnt;
+}node_arr;
 
 striped_htable* htable_create(uint8_t htable_pow2_size_factor, uint8_t htable_pow2_resize_factor,
                               uint8_t thres_load_factor, uint8_t buckets_per_lock, cmp_func cmpfn);
@@ -47,5 +57,15 @@ void node_put(node* n);
 void htable_delete(striped_htable* htable);
 
 uint64_t htable_get_elem_cnt(striped_htable* htable);
+
+dummy_node* intrusive_list_create();
+
+void intrusive_list_add(dummy_node* list, node* cl);
+
+void intrusive_list_remove(dummy_node* list, node* cl);
+
+void node_arr_add(node_arr* ndarr, node* nd);
+
+void node_arr_sweep(striped_htable* cltable, node_arr* ndarr);
 
 #endif //LWMSG_HTABLE_H

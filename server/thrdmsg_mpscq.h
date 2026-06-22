@@ -20,7 +20,6 @@ typedef struct mpsc_msg_node
     void* buf;
     uint32_t buf_size;
     uint32_t buf_offset;
-    char dest_uname[UNAMESIZE];
 }mpsc_msg_node;
 
 typedef struct mpsc_msg_queue
@@ -33,8 +32,6 @@ typedef struct mpsc_msg_queue
     uint8_t qmode;
 }mpsc_msg_queue;
 
-typedef struct mpsc_msg_queue mpsc_msg_queue;
-
 bool mpscq_create(mpsc_msg_queue* dest, uint8_t queue_mode);
 
 void mpscq_enqueue(mpsc_msg_queue* mpscq, mpsc_msg_node* msg);
@@ -45,6 +42,6 @@ void mpscq_destroy(mpsc_msg_queue* mpscq);
 
 int32_t mpscq_get_efd(mpsc_msg_queue* mpscq);
 
-mpsc_msg_node* msg_node_create(void* buf, uint64_t buf_size, char* dest_uname);
+mpsc_msg_node* msg_node_create(void* buf, uint64_t buf_size);
 
 #endif //LWMSG_THRDMSG_MPSCQ_H

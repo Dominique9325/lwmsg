@@ -81,7 +81,7 @@ static void cl_timerheap_heapify_down(cl_timerheap* heap, uint32_t index)
 }
 
 
-bool cl_timerheap_add(cl_timerheap* heap, client* cl)
+bool cl_timerheap_add(cl_timerheap* heap, client* cl, int64_t deadline_time_len)
 {
     assert(heap && heap->clients && heap->num_slots && cl);
 
@@ -93,6 +93,8 @@ bool cl_timerheap_add(cl_timerheap* heap, client* cl)
 
     uint32_t index = heap->num_clients++;
     heap->clients[index] = cl;
+    clock_gettime(CLOCK_MONOTONIC, &cl->auth_deadline);
+    cl->auth_deadline.tv_sec += deadline_time_len;
     cl->timerheap_index = index;
     cl_timerheap_heapify_up(heap, index);
     return true;
@@ -119,7 +121,7 @@ int64_t cl_timerheap_compute_root_timediff(cl_timerheap* heap, uint8_t target_st
     struct timespec curr_timestamp;
     clock_gettime(CLOCK_MONOTONIC, &curr_timestamp);
     int64_t timediff_sec = cl->auth_deadline.tv_sec - curr_timestamp.tv_sec;
-    if (__atomic_load_n(&cl->cl_state, memory_order_seq_cst) != target_state)
+    if (__atomic_load_n(&cl->cl_state, __ATOMIC_SEQ_CST) != target_state)
         return CLTH_NOT_APPLICABLE;
 
     if (timediff_sec <= 0)

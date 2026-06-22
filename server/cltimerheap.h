@@ -25,7 +25,7 @@ typedef struct cl_timerheap
     uint64_t num_slots;
 }cl_timerheap;
 
-bool cl_timerheap_add(cl_timerheap* heap, client* cl);
+bool cl_timerheap_add(cl_timerheap* heap, client* cl, int64_t deadline_time_len);
 
 client* cl_timerheap_peek(cl_timerheap* heap);
 

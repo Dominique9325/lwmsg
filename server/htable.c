@@ -9,6 +9,9 @@
 #include <assert.h>
 #include "htable.h"
 
+#include "clhandle.h"
+#include "xalloc.h"
+
 #define FNV1A_32_PRIME 0x01000193U
 #define FNV1A_32_OFFSET_BASIS 0x811C9DC5
 #define C_THRES_ELEM(thres_factor, bucket_count) ((bucket_count) * (thres_factor) / 100)
@@ -118,8 +121,8 @@ static void htable_resize(striped_htable *htable)
 
     /*To prevent there being a necessity for an immediate resize again,
      *and to prevent another thread from resizing right after the previous one did.*/
-    while (__atomic_load_n(&htable->element_count, memory_order_seq_cst) >=
-           __atomic_load_n(&htable->resize_thres_elem_count, memory_order_seq_cst))
+    while (__atomic_load_n(&htable->element_count, __ATOMIC_SEQ_CST) >=
+           __atomic_load_n(&htable->resize_thres_elem_count, __ATOMIC_SEQ_CST))
     {
         htable->bucket_count <<= htable->htable_pow2_resize_factor;
         if (htable->bucket_count < old_bucket_count)
@@ -130,7 +133,7 @@ static void htable_resize(striped_htable *htable)
 
         __atomic_store_n(
             &htable->resize_thres_elem_count,
-            C_THRES_ELEM(htable->threshold_load_factor, htable->bucket_count), memory_order_seq_cst
+            C_THRES_ELEM(htable->threshold_load_factor, htable->bucket_count), __ATOMIC_SEQ_CST
         );
         resize_count++;
     }
@@ -264,7 +267,7 @@ lock_resize_fail:
 bucket_resize_fail:
     htable->bucket_count = old_bucket_count;
     __atomic_store_n(&htable->resize_thres_elem_count,
-                     C_THRES_ELEM(htable->threshold_load_factor, htable->bucket_count), memory_order_seq_cst);
+                     C_THRES_ELEM(htable->threshold_load_factor, htable->bucket_count), __ATOMIC_SEQ_CST);
 }
 
 
@@ -277,8 +280,8 @@ bool htable_add(striped_htable *htable, node *element)
         return false;
 #endif
 
-    if (__atomic_load_n(&htable->element_count, memory_order_seq_cst) >=
-        __atomic_load_n(&htable->resize_thres_elem_count, memory_order_seq_cst))
+    if (__atomic_load_n(&htable->element_count, __ATOMIC_SEQ_CST) >=
+        __atomic_load_n(&htable->resize_thres_elem_count, __ATOMIC_SEQ_CST))
     {
         if (!pthread_rwlock_trywrlock(&htable->g_resize_lock))
         {
@@ -306,7 +309,7 @@ bool htable_add(striped_htable *htable, node *element)
 
     if (!htable->buckets[bucket_index])
     {
-        __atomic_fetch_add(&htable->element_count, 1, memory_order_seq_cst);
+        __atomic_fetch_add(&htable->element_count, 1, __ATOMIC_SEQ_CST);
         htable->buckets[bucket_index] = element;
         pthread_rwlock_unlock(&htable->locks[lock_index]);
         pthread_rwlock_unlock(&htable->g_resize_lock);
@@ -327,14 +330,14 @@ bool htable_add(striped_htable *htable, node *element)
         {
             if (!prev)
             {
-                __atomic_fetch_add(&htable->element_count, 1, memory_order_seq_cst);
+                __atomic_fetch_add(&htable->element_count, 1, __ATOMIC_SEQ_CST);
                 element->next = comparator;
                 htable->buckets[bucket_index] = element;
                 result = true;
                 break;
             }
 
-            __atomic_fetch_add(&htable->element_count, 1, memory_order_seq_cst);
+            __atomic_fetch_add(&htable->element_count, 1, __ATOMIC_SEQ_CST);
             element->next = comparator;
             prev->next = element;
             result = true;
@@ -347,7 +350,7 @@ bool htable_add(striped_htable *htable, node *element)
 
     if (!result && comp_res)
     {
-        __atomic_fetch_add(&htable->element_count, 1, memory_order_seq_cst);
+        __atomic_fetch_add(&htable->element_count, 1, __ATOMIC_SEQ_CST);
         prev->next = element;
         element->next = NULL;
         result = true;
@@ -403,7 +406,7 @@ void htable_remove(striped_htable *htable, const void *key, uint32_t key_size)
     }
 
     node_put(current);
-    __atomic_sub_fetch(&htable->element_count, 1, memory_order_seq_cst);
+    __atomic_sub_fetch(&htable->element_count, 1, __ATOMIC_SEQ_CST);
 exit:
     pthread_rwlock_unlock(&htable->locks[lock_index]);
     pthread_rwlock_unlock(&htable->g_resize_lock);
@@ -457,7 +460,13 @@ node *htable_get(striped_htable *htable, const void *key, uint32_t len, bool ref
 
 node* htable_get_cond(striped_htable* htable, const void* key, uint32_t len, bool(*cond_fn)(node* nd))
 {
+    if (!key || ((char*)key)[0] == '\0')
+        return NULL;
+
     node* nd = htable_get(htable, key, len, true);
+    if (!nd)
+        return NULL;
+
     if (cond_fn(nd))
         return nd;
 
@@ -468,13 +477,13 @@ node* htable_get_cond(striped_htable* htable, const void* key, uint32_t len, boo
 
 void node_get(node *n)
 {
-    __atomic_add_fetch(&n->ref_cnt, 1, memory_order_seq_cst);
+    __atomic_add_fetch(&n->ref_cnt, 1, __ATOMIC_SEQ_CST);
 }
 
 
 void node_put(node *n)
 {
-    uint32_t refcnt = __atomic_sub_fetch(&n->ref_cnt, 1, memory_order_seq_cst);
+    uint32_t refcnt = __atomic_sub_fetch(&n->ref_cnt, 1, __ATOMIC_SEQ_CST);
     if (!refcnt)
         n->free_fn(n);
 }
@@ -516,5 +525,74 @@ void htable_delete(striped_htable *htable)
 
 uint64_t htable_get_elem_cnt(striped_htable* htable)
 {
-    return __atomic_load_n(&htable->element_count, memory_order_seq_cst);
+    return __atomic_load_n(&htable->element_count, __ATOMIC_SEQ_CST);
+}
+
+dummy_node* intrusive_list_create()
+{
+    dummy_node* list = (dummy_node*)xcalloc(1, sizeof(dummy_node));
+    return list;
+}
+
+void intrusive_list_add(dummy_node* list, node* nd)
+{
+    nd->next = NULL;
+
+
+    if (!list->next)
+    {
+        list->next = nd;
+        return;
+    }
+
+    nd->next = list->next;
+    list->next = nd;
+}
+
+void intrusive_list_remove(dummy_node* list, node* nd)
+{
+    if (!list->next || !nd)
+        return;
+
+    node* curr = list->next;
+    node* prev = NULL;
+
+    while (curr && nd != curr)
+    {
+        prev = curr;
+        curr = curr->next;
+    }
+
+    if (!curr)
+        return;
+
+    if (!prev)
+        list->next = nd->next;
+    else
+        prev->next = nd->next;
+
+    nd->next = NULL;
+}
+
+void node_arr_add(node_arr* ndarr, node* nd)
+{
+    if (ndarr->elem_cnt == ndarr->size)
+    {
+        node** temp = xrealloc(ndarr->nodes, ndarr->size * 2);
+        ndarr->nodes = temp;
+        ndarr->size *= 2;
+    }
+
+    ndarr->nodes[ndarr->elem_cnt++] = nd;
+}
+
+void node_arr_sweep(striped_htable* cltable, node_arr* ndarr)
+{
+    for (uint32_t i = 0; i < ndarr->elem_cnt; i++)
+        htable_remove(cltable, &ndarr->nodes[i]->key, ndarr->nodes[i]->key_size);
+
+    node** temp = xrealloc(ndarr->nodes, DEF_STDCL_DCONARR_SIZE * sizeof(node*));
+    ndarr->nodes = temp;
+    ndarr->size = DEF_STDCL_DCONARR_SIZE;
+    ndarr->elem_cnt = 0;
 }

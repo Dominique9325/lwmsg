@@ -24,8 +24,9 @@
 
 #define MAX_REVENTS 1024
 
-static void cleanup_reg_client(reg_client_list* list, cl_timerheap* clth, reg_client_node* pcln, int32_t epollfd, net_fns* nfn)
+static void cleanup_reg_client(reg_client_list* list, cl_timerheap* clth, reg_client_node* pcln, int32_t epollfd)
 {
+    net_fns* nfn = &g_server_cfg->networking_functions;
     epoll_ctl(epollfd, EPOLL_CTL_DEL, pcln->cl.connection.sock_fd, NULL);
     nfn->disconnect_fn(&pcln->cl.connection);
 
@@ -42,7 +43,7 @@ static void handle_flg_reg_changed(epoll_ctx* p_ec_reg_changed, epoll_ctx* p_ec_
 {
     eventfd_t temp;
     read(p_ec_reg_changed->fd, &temp, 8);
-    uint8_t flg_reg = __atomic_load_n(&g_server_cfg->allow_registrations, memory_order_seq_cst);
+    uint8_t flg_reg = __atomic_load_n(&g_server_cfg->allow_registrations, __ATOMIC_SEQ_CST);
 
     if (flg_reg && p_ec_listener->fd == -1)
     {
@@ -58,9 +59,10 @@ static void handle_flg_reg_changed(epoll_ctx* p_ec_reg_changed, epoll_ctx* p_ec_
     }
 }
 
-static void handle_shutdown(reg_client_list* list, cl_timerheap* clth, int32_t epollfd, net_fns* nfn, int32_t flg_reg_ch,
+static void handle_shutdown(reg_client_list* list, cl_timerheap* clth, int32_t epollfd, int32_t flg_reg_ch,
                             int32_t flg_shutdown, sqlite3_stmt* reg_stmt, sqlite3_stmt* del_stmt, int32_t listener_sock_fd)
 {
+    net_fns* nfn = &g_server_cfg->networking_functions;
     sqlite3_finalize(reg_stmt);
     sqlite3_finalize(del_stmt);
     free(clth->clients);
@@ -105,18 +107,18 @@ static void track_new_client(reg_client_list* list, cl_timerheap* clth, reg_clie
 
     if (acceptres == ACCPT_DONE)
     {
-        __atomic_store_n(&cln->cl.cl_state, ACCEPTED, memory_order_seq_cst);
-        clock_gettime(CLOCK_MONOTONIC, &cln->cl.auth_deadline);
-        cln->cl.auth_deadline.tv_sec += CLTH_REG_MAXPERM_TIME;
-        cl_timerheap_add(clth, &cln->cl);
+        __atomic_store_n(&cln->cl.cl_state, ACCEPTED, __ATOMIC_SEQ_CST);
+        cl_timerheap_add(clth, &cln->cl, CLTH_REG_MAXPERM_TIME);
         cl_epev.events &= ~EPOLLOUT;
     }
     epoll_ctl(epollfd, EPOLL_CTL_ADD, cln->cl.connection.sock_fd, &cl_epev);
 }
 
 static void handle_new_connections(reg_client_list* list, cl_timerheap* clth, reg_thrd_ctx* rt_ctx,
-                                   epoll_ctx* p_ec_listener, int32_t epollfd, net_fns* nfn)
+                                   epoll_ctx* p_ec_listener, int32_t epollfd)
 {
+    net_fns* nfn = &g_server_cfg->networking_functions;
+
     while (true)
     {
         struct sockaddr_in saddr;
@@ -145,7 +147,7 @@ static void handle_new_connections(reg_client_list* list, cl_timerheap* clth, re
             break;
         }
 
-        if (__atomic_load_n(&g_server_cfg->use_ip_whitelist, memory_order_seq_cst) && !htable_get(rt_ctx->ip_whitelist_tbl, &saddr.sin_addr.s_addr, sizeof(in_addr_t), false))
+        if (__atomic_load_n(&g_server_cfg->use_ip_whitelist, __ATOMIC_SEQ_CST) && !htable_get(rt_ctx->ip_whitelist_tbl, &saddr.sin_addr.s_addr, sizeof(in_addr_t), false))
         {
             dzlog_notice("Disconnected peer not present on the whitelist. IP: %u.%u.%u.%u", IP4DOT(saddr.sin_addr.s_addr));
             close(clsock);
@@ -155,17 +157,17 @@ static void handle_new_connections(reg_client_list* list, cl_timerheap* clth, re
         node* ripbr_node = htable_get(rt_ctx->reg_ipblock_tbl, &saddr.sin_addr.s_addr, sizeof(saddr.sin_addr.s_addr), true);
         if (ripbr_node)
         {
-            reg_ipb_rec* ripbr = node_container_of(reg_ipb_rec, nd, ripbr_node);
+            reg_ipb_rec* ripbr = container_of(reg_ipb_rec, nd, ripbr_node);
             uint8_t blk_status = chk_reg_block(ripbr);
 
-            if (blk_status == BLOCKED)
+            if (blk_status == RS_BLOCKED)
             {
                 node_put(ripbr_node);
                 dzlog_notice("Blocked peer attempted to connect. IP: %u.%u.%u.%u", IP4DOT(saddr.sin_addr.s_addr));
                 close(clsock);
                 continue;
             }
-            else if (blk_status == REC_EXPIRED)
+            else if (blk_status == RS_EXPIRED)
             {
                 dzlog_info("Removing expired registration blocking record. IP: %u.%u.%u.%u", IP4DOT(saddr.sin_addr.s_addr));
                 htable_remove(rt_ctx->reg_ipblock_tbl, ripbr_node->key, ripbr_node->key_size);
@@ -196,7 +198,7 @@ static void manage_reg_ipbr(reg_thrd_ctx* rt_ctx, reg_client_node* pcln, uint8_t
     }
     else
     {
-        reg_ipb_rec* ripbr = node_container_of(reg_ipb_rec, nd, ripbr_node);
+        reg_ipb_rec* ripbr = container_of(reg_ipb_rec, nd, ripbr_node);
         if (ripb_reason == RSN_REGSUCC)
         {
             ripbr->succ_regs++;
@@ -240,13 +242,14 @@ static void reg_handle_disconnect(reg_client_list* list, cl_timerheap* clth, reg
 
     }
     dzlog_info("%u.%u.%u.%u disconnected.", IP4DOT(pcln->cl.peer_name));
-    cleanup_reg_client(list, clth, pcln, epollfd, nfn);
+    cleanup_reg_client(list, clth, pcln, epollfd);
 }
 
 static void handle_client_event(reg_client_list* list, cl_timerheap* clth, struct epoll_event* revent,
-                        reg_thrd_ctx* rt_ctx, net_fns* nfn, sqlite3_stmt* reg_stmt, sqlite3_stmt* del_stmt,
+                        reg_thrd_ctx* rt_ctx, sqlite3_stmt* reg_stmt, sqlite3_stmt* del_stmt,
                         int32_t epollfd)
 {
+    net_fns* nfn = &g_server_cfg->networking_functions;
     reg_client_node* pcln = (reg_client_node*)revent->data.ptr;
 
     if (revent->events & (EPOLLHUP | EPOLLERR))
@@ -255,18 +258,18 @@ static void handle_client_event(reg_client_list* list, cl_timerheap* clth, struc
         return;
     }
 
-    if (__atomic_load_n(&pcln->cl.cl_state, memory_order_seq_cst) == ACCEPTING)
+    if (__atomic_load_n(&pcln->cl.cl_state, __ATOMIC_SEQ_CST) == ACCEPTING)
     {
         int32_t ares = nfn->accept_fn(&pcln->cl.connection, rt_ctx->ssl_ctx);
         if (ares == ERROR)
         {
             dzlog_info("%u.%u.%u.%u failed to connect.", IP4DOT(pcln->cl.peer_name));
-            cleanup_reg_client(list, clth, pcln, epollfd, nfn);
+            cleanup_reg_client(list, clth, pcln, epollfd);
             return;
         }
         else if (ares == ACCPT_DONE)
         {
-            __atomic_store_n(&pcln->cl.cl_state, ACCEPTED, memory_order_seq_cst);
+            __atomic_store_n(&pcln->cl.cl_state, ACCEPTED, __ATOMIC_SEQ_CST);
             struct epoll_event ev_cl = {.data.ptr = pcln, .events = EPOLLIN};
             epoll_ctl(epollfd, EPOLL_CTL_MOD, pcln->cl.connection.sock_fd, &ev_cl);
         }
@@ -284,7 +287,7 @@ static void handle_client_event(reg_client_list* list, cl_timerheap* clth, struc
                 if (data_recved == EBLOCK)
                     return;
 
-                cleanup_reg_client(list, clth, pcln, epollfd, nfn);
+                cleanup_reg_client(list, clth, pcln, epollfd);
                 return;
             }
             pcln->cl.tmpbuf_recv.buf_data_offset += data_recved;
@@ -316,15 +319,16 @@ static void handle_client_event(reg_client_list* list, cl_timerheap* clth, struc
                     manage_reg_ipbr(rt_ctx, pcln, ripb_reason);
 
                 uint32_t resp_code = request_result ? AUTH_RESP_OK : (request_stmt ? AUTH_RESP_INVAL_PARAM : AUTH_RESP_INVAL_REQ);
-                req_send_resp(&pcln->cl, nfn, resp_code);
-                cleanup_reg_client(list, clth, pcln, epollfd, nfn);
+                auth_send_resp(&pcln->cl, nfn, resp_code);
+                cleanup_reg_client(list, clth, pcln, epollfd);
             }
         }
     }
 }
 
-static int64_t handle_clth_timeout(reg_client_list* list, cl_timerheap* clth, int32_t epollfd, net_fns* nfn)
+static int64_t handle_clth_timeout(reg_client_list* list, cl_timerheap* clth, int32_t epollfd)
 {
+    net_fns* nfn = &g_server_cfg->networking_functions;
     while (true)
     {
         int64_t timediff = cl_timerheap_compute_root_timediff(clth, ACCEPTED);
@@ -338,8 +342,8 @@ static int64_t handle_clth_timeout(reg_client_list* list, cl_timerheap* clth, in
 
             case CLTH_TIMEOUT:
                 cl = cl_timerheap_pop(clth);
-                req_send_resp(cl, nfn, AUTH_RESP_TIMEOUT);
-                cleanup_reg_client(list, clth, (reg_client_node*)cl, epollfd, nfn);
+                auth_send_resp(cl, nfn, AUTH_RESP_TIMEOUT);
+                cleanup_reg_client(list, clth, container_of(reg_client_node, cl, cl), epollfd);
                 break;
 
             case CLTH_EMPTY:
@@ -358,7 +362,6 @@ void* reg_thrd_routine(void* reg_thread_ctx)
         pthread_exit(NULL);
 
     zlog_put_mdc("thrd_id", "reg");
-    net_fns* nfn = &g_server_cfg->networking_functions;
     reg_thrd_ctx* rt_ctx = (reg_thrd_ctx*)reg_thread_ctx;
     sqlite3_stmt* reg_stmt = NULL;
     sqlite3_stmt* del_stmt = NULL;
@@ -397,7 +400,7 @@ void* reg_thrd_routine(void* reg_thread_ctx)
     epoll_ctl(epollfd, EPOLL_CTL_ADD, rt_ctx->flg_reg_changed, &ev_reg_changed);
     epoll_ctl(epollfd, EPOLL_CTL_ADD, rt_ctx->flg_shutdown, &ev_shutdown);
 
-    if (__atomic_load_n(&g_server_cfg->allow_registrations, memory_order_seq_cst))
+    if (__atomic_load_n(&g_server_cfg->allow_registrations, __ATOMIC_SEQ_CST))
     {
         ec_listener.fd = server_start_tcp(inet_addr(g_server_cfg->gen_interface), g_server_cfg->reg_port, 128, true, false);
         epoll_ctl(epollfd, EPOLL_CTL_ADD, ec_listener.fd, &ev_listener);
@@ -417,7 +420,7 @@ void* reg_thrd_routine(void* reg_thread_ctx)
     while (true)
     {
         dzlog_debug("R = %u", R++);
-        int64_t clth_root_timediff = handle_clth_timeout(list, &clth, epollfd, nfn);
+        int64_t clth_root_timediff = handle_clth_timeout(list, &clth, epollfd);
         dzlog_debug("Waittime = %ld", clth_root_timediff);
         int32_t num_events = epoll_wait(epollfd, revents, MAX_REVENTS, (int32_t)clth_root_timediff);
 
@@ -430,7 +433,7 @@ void* reg_thrd_routine(void* reg_thread_ctx)
                 {
                     if (ectx->fd == ec_shutdown.fd && revents[i].events & EPOLLIN)
                     {
-                        handle_shutdown(list, &clth, epollfd, nfn, rt_ctx->flg_reg_changed, rt_ctx->flg_shutdown,
+                        handle_shutdown(list, &clth, epollfd, rt_ctx->flg_reg_changed, rt_ctx->flg_shutdown,
                             reg_stmt, del_stmt, ec_listener.fd);
                         dzlog_debug("ripbr_count = %lu", htable_get_elem_cnt(rt_ctx->reg_ipblock_tbl));
                         pthread_exit(NULL);
@@ -444,12 +447,12 @@ void* reg_thrd_routine(void* reg_thread_ctx)
 
 
                 case EP_LISTENER:
-                    handle_new_connections(list, &clth, rt_ctx, &ec_listener, epollfd, nfn);
+                    handle_new_connections(list, &clth, rt_ctx, &ec_listener, epollfd);
                     break;
 
 
                 case EP_CLIENT:
-                    handle_client_event(list, &clth, &revents[i], rt_ctx, nfn, reg_stmt, del_stmt, epollfd);
+                    handle_client_event(list, &clth, &revents[i], rt_ctx, reg_stmt, del_stmt, epollfd);
                     break;
 
 

@@ -129,7 +129,7 @@ int32_t mpscq_get_efd(mpsc_msg_queue* mpscq)
     return mpscq->eventfd;
 }
 
-mpsc_msg_node* msg_node_create(void* buf, uint64_t buf_size, char* dest_uname)
+mpsc_msg_node* msg_node_create(void* buf, uint64_t buf_size)
 {
     mpsc_msg_node* msg = (mpsc_msg_node*)xmalloc(sizeof(mpsc_msg_node));
     *msg = (mpsc_msg_node){
@@ -141,11 +141,5 @@ mpsc_msg_node* msg_node_create(void* buf, uint64_t buf_size, char* dest_uname)
     };
 
     memcpy(msg->buf, buf, buf_size);
-    if (dest_uname)
-        strncpy(msg->dest_uname, dest_uname, UNAMESIZE);
-    else
-        msg->dest_uname[0] = '\0';
-
-    msg->dest_uname[UNAMESIZE - 1] = '\0';
     return msg;
 }

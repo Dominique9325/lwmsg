@@ -10,10 +10,8 @@
 #include <netinet/in.h>
 #include <errno.h>
 #include <openssl/err.h>
-
 #include "zlog.h"
-
-#define IP4DOT(be_addr) be_addr >> 24, be_addr >> 16 & 0xFF, be_addr >> 8 & 0xFF, be_addr & 0xFF
+#include "misc.h"
 
 int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backlog, bool nonblock, bool reuse_port)
 {
@@ -202,8 +200,11 @@ uint64_t avail_data_tls(conn* c)
 
 void disconnect_tls(conn* c)
 {
-    if (SSL_is_init_finished(c->ssl))
+    if (c->ssl && SSL_is_init_finished(c->ssl))
+    {
         SSL_shutdown(c->ssl);
+        SSL_free(c->ssl);
+    }
 
     close(c->sock_fd);
 }

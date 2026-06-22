@@ -36,6 +36,7 @@ typedef struct epoll_ctx
 enum client_state
 {
     // shared states (reg client and std client)
+    INIT,
     ACCEPTING,
     ACCEPTED,
     DISCONNECTED,
@@ -47,14 +48,16 @@ enum client_state
     AUTHENTICATED
 };
 
-extern uint64_t curr_msg_id;
+extern ATOMIC uint64_t curr_msg_id;
 
 typedef struct curr_recv_msg
 {
     buffer recvbuf;
-    uint32_t expected_msg_size;
-    uint16_t msg_id;
-    uint16_t msg_type;
+    uint64_t expected_msg_size;
+    uint64_t total_msg_data_recved;
+    uint32_t msg_id;
+    uint32_t msg_type;
+    char dest_uname[UNAMESIZE];
 }curr_recv_msg;
 
 typedef struct client
@@ -91,6 +94,7 @@ typedef struct reg_client_node
     struct reg_client_node* next;
 }reg_client_node;
 
+
 typedef reg_client_node reg_client_list;
 
 reg_client_list* list_create();
@@ -103,6 +107,10 @@ void list_delete(reg_client_list* list);
 
 int32_t std_client_cmp(const void* cla, const void* clb, uint32_t lena, uint32_t lenb);
 
-void req_send_resp(client* cl, net_fns* nfn, uint32_t resp_type);
+void auth_send_resp(client* cl, net_fns* nfn, uint32_t resp_type);
+
+std_client* create_std_client(in_addr_t peer_name, int32_t clsock, uint8_t owner_thrd_id);
+
+bool is_not_disconnected(node* nd);
 
 #endif //LWMSG_CLHANDLE_H

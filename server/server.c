@@ -109,10 +109,10 @@ int main(int argc, char** argv)
 
 
     sleep(10);
-    //__atomic_store_n(&g_server_cfg->allow_regisrations, false, memory_order_seq_cst);
+    //__atomic_store_n(&g_server_cfg->allow_regisrations, false, __ATOMIC_SEQ_CST);
     //eventfd_write(shutdown_efd, 1);
     // sleep(5);
-    // //__atomic_store_n(&g_server_cfg->allow_regisrations, true, memory_order_seq_cst);
+    // //__atomic_store_n(&g_server_cfg->allow_regisrations, true, __ATOMIC_SEQ_CST);
     // write(rt_ctx->flg_reg_changed, &evvv, sizeof(eventfd_t));
     prog_retval = 0;
 
