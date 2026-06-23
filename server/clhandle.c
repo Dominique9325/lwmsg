@@ -158,7 +158,7 @@ bool validate_recipient(void* htable, char* rcpt_uname)
 
 bool validate_request(lwmp_pdu* pdu)
 {
-    if (ntohl(pdu->msg_type) != MT_REQ)
+    if (pdu->msg_type != MT_REQ)
         return false;
 
     if (ntohl(pdu->request.req_type) != REQ_USER_LIST)

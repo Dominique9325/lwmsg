@@ -156,7 +156,7 @@ uint8_t lwmp_validate_hdrs(lwmp_pdu* pdu, void* subj_container, char* subject, c
     if (pdu->msg_type == MT_REQ && !hvfns->req_valid_fn(pdu))
         return HV_INVAL_REQ;
 
-    uint32_t orig_le_crc32 = pdu->crc32;
+    uint32_t orig_le_crc32 = ntohl(pdu->crc32);
     uint32_t computed_crc32 = crc32(pdu, offsetof(lwmp_pdu, crc32));
     if (computed_crc32 != orig_le_crc32)
         return HV_CRCERR;

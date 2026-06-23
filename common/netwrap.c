@@ -13,7 +13,7 @@
 #include "zlog.h"
 #include "misc.h"
 
-int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backlog, bool nonblock, bool reuse_port)
+int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backlog, bool nonblock, int32_t reuse_port)
 {
     int32_t sock = socket(AF_INET, SOCK_STREAM | (nonblock ? SOCK_NONBLOCK : 0), IPPROTO_TCP);
     if (sock == ERROR)
@@ -207,4 +207,5 @@ void disconnect_tls(conn* c)
     }
 
     close(c->sock_fd);
+    c->sock_fd = ERROR;
 }
