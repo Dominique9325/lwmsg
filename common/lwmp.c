@@ -101,7 +101,7 @@ uint32_t crc32(const void* data, uint64_t len)
 
 uint64_t lwmp_stream_resync(unsigned char* buf, uint64_t buf_size)
 {
-    uint32_t be_hdr_mark = htonl(SYNC_HDR_MARK);
+    uint32_t be_hdr_mark = htonl(PDU_SYNC_HDR_MARK);
     ptrdiff_t new_size = 0;
 
     while (true)
@@ -134,7 +134,7 @@ uint64_t lwmp_stream_resync(unsigned char* buf, uint64_t buf_size)
 // Note: This is a server-exclusive function.
 uint8_t lwmp_validate_hdrs(lwmp_pdu* pdu, void* subj_container, char* subject, const hdr_validation_fns* hvfns)
 {
-    if (ntohl(pdu->hdr_mark) != SYNC_HDR_MARK)
+    if (ntohl(pdu->hdr_mark) != PDU_SYNC_HDR_MARK)
         return HV_INVAL_PDU;
 
     if (pdu->msg_type != MT_MSG && pdu->msg_type != MT_FILE && pdu->msg_type != MT_REQ)
@@ -175,7 +175,7 @@ void lwmp_prepare_response(lwmp_pdu* pdu, uint8_t msg_type, void* optdata, uint8
 
 
     pdu->msg_type = msg_type;
-    pdu->hdr_mark = htonl(SYNC_HDR_MARK);
+    pdu->hdr_mark = htonl(PDU_SYNC_HDR_MARK);
     if (optdata)
     {
         memcpy(pdu->optional_data, optdata, optdata_len);
@@ -196,4 +196,10 @@ void lwmp_prepare_response(lwmp_pdu* pdu, uint8_t msg_type, void* optdata, uint8
     pdu->crc32 = htonl(crc32(pdu, offsetof(lwmp_pdu, crc32)));
 }
 
-
+void lwmp_prepare_chunk(lwmp_chunk* lwc, uint16_t size, char* subject, void* data)
+{
+    lwc->ch_hdr_mark = htonl(CHUNK_SYNC_HDR_MARK);
+    strncpy(lwc->subject_uname, subject, UNAMESIZE);
+    lwc->chunk_size = htons(size);
+    memcpy(lwc->payload, data, size);
+}

@@ -27,7 +27,7 @@
     X(HV_CRCERR,           RESP_INVAL_CRC,       0xCC32621AU)  \
     X(HV_INVAL_REQ,        RESP_INVAL_REQ,       0x3738AA64U)  \
     X(HV_INVAL_PDU,        RESP_INVAL_PDU,       0x337C801AU)  \
-    X(HV_INVAL_SUBJ,       RESP_DCONN_RCPT,      0x772A5C19U)
+    X(HV_INVAL_SUBJ,       RESP_DCONN_SUBJ,      0x772A5C19U)
 
 enum hdr_validation_status
 {
@@ -160,5 +160,7 @@ uint64_t lwmp_stream_resync(unsigned char* buf, uint64_t buf_size);
 uint8_t lwmp_validate_hdrs(lwmp_pdu* pdu, void* subj_container, char* subject, const hdr_validation_fns* hvfns);
 
 void lwmp_prepare_response(lwmp_pdu* pdu, uint8_t msg_type, void* optdata, uint8_t optdata_len, char* text);
+
+void lwmp_prepare_chunk(lwmp_chunk* lwc, uint16_t size, char* subject, void* data);
 
 #endif //LWMSG_LWMP_H

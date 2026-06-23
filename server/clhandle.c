@@ -105,7 +105,8 @@ std_client* create_std_client(in_addr_t peer_name, int32_t clsock, uint8_t owner
                 },
                 .expected_msg_size = 0,
                 .total_msg_data_recved = 0,
-                .msg_init_pdu = false,
+                .not_msg_init_pdu = false,
+                .is_desynced = false,
                 .msg_type = MT_NONE,
                 .dest_uname = {0}
             }

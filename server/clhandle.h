@@ -57,6 +57,7 @@ typedef struct curr_recv_msg
     uint64_t total_msg_data_recved;
     uint32_t msg_type;
     bool not_msg_init_pdu;
+    bool is_desynced;
     char dest_uname[UNAMESIZE];
 }curr_recv_msg;
 

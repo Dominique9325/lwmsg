@@ -284,12 +284,48 @@ static uint64_t handle_request(lwmp_pdu* pdu, stdcl_containers* cont, void** req
     }
 }
 
-static void wt_handle_inbound_data(worker_thrd_ctx* wt_ctx, std_client* stdcl, stdcl_containers* cont, struct epoll_event* ev_cl,
-                                  sqlite3_stmt* fetch_stmt, int32_t epollfd)
+static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, struct epoll_event* ev_cl, int32_t epollfd)
 {
+    if (__atomic_load_n(&stdcl->cl.cl_state, __ATOMIC_SEQ_CST) == DISCONNECTED)
+        return false;
+
     curr_recv_msg* tmp_rcv_st = &stdcl->cl.temp_recv_storage;
     buffer* recvbuf = &tmp_rcv_st->recvbuf;
     net_fns* nfn = &g_server_cfg->networking_functions;
+
+    if (tmp_rcv_st->is_desynced)
+    {
+        do
+        {
+            uint32_t offset = recvbuf->buf_data_offset;
+            int64_t recved_data = nfn->recv_fn(&stdcl->cl.connection, recvbuf->buf + offset, recvbuf->buf_size - offset);
+            if (recved_data == ERROR)
+            {
+                cleanup_std_client(cont, &stdcl->nd, epollfd);
+                return true;
+            }
+            else if (recved_data == EBLOCK)
+                break;
+
+            recvbuf->buf_data_offset += recved_data;
+            if (recvbuf->buf_data_offset == recvbuf->buf_size)
+                break;
+
+        }while (true);
+
+        uint64_t new_offset = lwmp_stream_resync(recvbuf->buf, recvbuf->buf_data_offset);
+        recvbuf->buf_data_offset = new_offset;
+        if (new_offset)
+        {
+            dzlog_info("Managed to resync client %s's data stream.", stdcl->username);
+            tmp_rcv_st->is_desynced = false;
+        }
+        else
+        {
+            dzlog_info("Failed to resync client %s's data stream.", stdcl->username);
+            return true;
+        }
+    }
 
     if (tmp_rcv_st->not_msg_init_pdu)
     {
@@ -301,11 +337,11 @@ static void wt_handle_inbound_data(worker_thrd_ctx* wt_ctx, std_client* stdcl, s
             if (recved_data == ERROR)
             {
                 cleanup_std_client(cont, &stdcl->nd, epollfd);
-                return;
+                return false;
             }
 
             if (recved_data == EBLOCK)
-                return;
+                return true;
 
             recvbuf->buf_data_offset += recved_data;
         }
@@ -332,10 +368,10 @@ static void wt_handle_inbound_data(worker_thrd_ctx* wt_ctx, std_client* stdcl, s
             if (recved_data == ERROR)
             {
                 cleanup_std_client(cont, &stdcl->nd, epollfd);
-                return;
+                return false;
             }
             else if (recved_data == EBLOCK)
-                return;
+                return true;
 
             recvbuf->buf_data_offset += recved_data;
             tmp_rcv_st->total_msg_data_recved += recved_data;
@@ -350,6 +386,10 @@ static void wt_handle_inbound_data(worker_thrd_ctx* wt_ctx, std_client* stdcl, s
                 mpsc_msg_node* msg = msg_node_create(NULL, lwmp_hdr_size, NULL);
                 lwmp_prepare_response((lwmp_pdu*)msg->buf, MT_INFO, &resp, sizeof(resp), NULL);
                 wt_serve_response(cont, stdcl, msg, ev_cl, epollfd);
+                uint64_t offset = offsetof(curr_recv_msg, expected_msg_size);
+                memset(tmp_rcv_st + offset, 0, sizeof(curr_recv_msg) - offset);
+                recvbuf->buf_data_offset = 0;
+                return true;
             }
             else if (tmp_rcv_st->msg_type == MT_REQ)
             {
@@ -376,8 +416,25 @@ static void wt_handle_inbound_data(worker_thrd_ctx* wt_ctx, std_client* stdcl, s
             }
             else
             {
+                node* stdclnode = htable_get_cond(cont->std_cl_table, tmp_rcv_st->dest_uname, strlen(tmp_rcv_st->dest_uname), is_not_disconnected);
+                if (!stdclnode)
+                {
+                    char text[256];
+                    snprintf(text, 256, "Unable to reach recipient %s.", tmp_rcv_st->dest_uname);
+                    mpsc_msg_node* msg = msg_node_create(NULL, lwmp_hdr_size, NULL);
+                    uint32_t resp_code = htonl(RESP_DCONN_SUBJ);
+                    lwmp_prepare_response((lwmp_pdu*)msg->buf, MT_INFO, &resp_code, sizeof(resp_code), text);
+                    wt_serve_response(cont, stdcl, msg, ev_cl, epollfd);
+                    uint64_t offset = offsetof(curr_recv_msg, expected_msg_size);
+                    memset(tmp_rcv_st + offset, 0, sizeof(curr_recv_msg) - offset);
+                    recvbuf->buf_data_offset = 0;
+                    return true;
+                }
                 mpsc_msg_node* msg = msg_node_create(recvbuf->buf, recvbuf->buf_data_offset, tmp_rcv_st->dest_uname);
-                mpscq_enqueue(&stdcl->pending_userdata_queue, msg);
+                std_client* rcpt = container_of(std_client, nd, stdclnode);
+                mpscq_enqueue(&rcpt->pending_userdata_queue, msg);
+                node_put(stdclnode);
+                recvbuf->buf_data_offset = 0;
             }
 
             if (tmp_rcv_st->total_msg_data_recved == tmp_rcv_st->expected_msg_size)
@@ -389,7 +446,7 @@ static void wt_handle_inbound_data(worker_thrd_ctx* wt_ctx, std_client* stdcl, s
             else
                 tmp_rcv_st->not_msg_init_pdu = true;
         }
-        return;
+        return true;
     }
 
 
@@ -401,17 +458,169 @@ static void wt_handle_inbound_data(worker_thrd_ctx* wt_ctx, std_client* stdcl, s
         if (recved_data == ERROR)
         {
             cleanup_std_client(cont, &stdcl->nd, epollfd);
-            return;
+            return false;
         }
         else if (recved_data == EBLOCK)
-            return;
+            return true;
 
         recvbuf->buf_data_offset += recved_data;
         tmp_rcv_st->total_msg_data_recved += recved_data;
     }
 
+    node* rcpt_node = htable_get_cond(cont->std_cl_table, tmp_rcv_st->dest_uname, strlen(tmp_rcv_st->dest_uname), is_not_disconnected);
+    if (!rcpt_node)
+    {
+        char text[32];
+        snprintf(text, 32, "Unable to reach recipient %s.", tmp_rcv_st->dest_uname);
+        mpsc_msg_node* msg = msg_node_create(NULL, lwmp_hdr_size, NULL);
+        uint32_t resp_code = htonl(RESP_DCONN_SUBJ);
+        lwmp_prepare_response((lwmp_pdu*)msg->buf, MT_INFO, &resp_code, sizeof(resp_code), text);
+        wt_serve_response(cont, stdcl, msg, ev_cl, epollfd);
+        uint64_t offset = offsetof(curr_recv_msg, expected_msg_size);
+        memset(tmp_rcv_st + offset, 0, sizeof(curr_recv_msg) - offset);
+        recvbuf->buf_data_offset = 0;
+        tmp_rcv_st->is_desynced = true;
+        return true;
+    }
+
+    std_client* rcpt = container_of(std_client, nd, rcpt_node);
+    mpsc_msg_node* msg = msg_node_create(NULL, LWMP_CHUNK_HDR_SIZE + recvbuf->buf_data_offset, tmp_rcv_st->dest_uname);
+    lwmp_prepare_chunk((lwmp_chunk*)msg->buf, recvbuf->buf_data_offset, tmp_rcv_st->dest_uname, recvbuf->buf);
+    mpscq_enqueue(&rcpt->pending_userdata_queue, msg);
+    node_put(rcpt_node);
+    recvbuf->buf_data_offset = 0;
+
+    if (tmp_rcv_st->expected_msg_size == tmp_rcv_st->total_msg_data_recved)
+    {
+        uint64_t offset = offsetof(curr_recv_msg, expected_msg_size);
+        memset(tmp_rcv_st + offset, 0, sizeof(curr_recv_msg) - offset);
+        recvbuf->buf_data_offset = 0;
+    }
+
+    return true;
 }
 
+static int64_t send_one_msg(stdcl_containers* cont, std_client* stdcl, int32_t epollfd)
+{
+    net_fns* nfn = &g_server_cfg->networking_functions;
+    mpsc_msg_node* tss = stdcl->temp_send_storage;
+    while (tss->buf_offset < tss->buf_size)
+    {
+        int64_t data_sent = nfn->send_fn(&stdcl->cl.connection, tss->buf, tss->buf_size - tss->buf_offset);
+        if (data_sent == ERROR)
+        {
+            cleanup_std_client(cont, &stdcl->nd, epollfd);
+            return ERROR;
+        }
+        else if (data_sent == EBLOCK)
+            return EBLOCK;
+
+        tss->buf_offset += data_sent;
+    }
+
+    int64_t total_data = tss->buf_offset;
+    free(tss->buf);
+    free(tss);
+    stdcl->temp_send_storage = NULL;
+    return total_data;
+}
+
+static void notify_about_disconnect(std_client* stdcl)
+{
+    char buf[128];
+    snprintf(buf, 128, "Sender %s has disconnected, the latest message may have been partially delivered.", stdcl->temp_send_storage->subject_name);
+    mpsc_msg_node* info_msg = msg_node_create(NULL, lwmp_hdr_size + strlen(buf) + 1, NULL);
+    uint32_t opt = htonl(RESP_DCONN_SUBJ);
+    lwmp_prepare_response((lwmp_pdu*)info_msg->buf, MT_INFO, &opt, sizeof(opt), buf);
+    mpscq_enqueue(&stdcl->pending_ctrl_queue, info_msg);
+}
+
+static void wt_handle_outbound_data(std_client* stdcl, stdcl_containers* cont, struct epoll_event* ev_cl, int32_t epollfd)
+{
+    if (__atomic_load_n(&stdcl->cl.cl_state, __ATOMIC_SEQ_CST) == DISCONNECTED)
+        return;
+
+
+    if (stdcl->temp_send_storage)
+    {
+        node* nd = htable_get_cond(cont->std_cl_table, stdcl->temp_send_storage->subject_name, strlen(stdcl->temp_send_storage->subject_name), is_not_disconnected);
+        if (!nd)
+            notify_about_disconnect(stdcl);
+        else
+            node_put(nd);
+
+        int64_t res = send_one_msg(cont, stdcl, epollfd);
+        if (res < 0)
+            return;
+    }
+
+    while (true)
+    {
+        mpsc_msg_node* msg = mpscq_dequeue(&stdcl->pending_ctrl_queue);
+        if (!msg)
+            break;
+
+        stdcl->temp_send_storage = msg;
+        int64_t res = send_one_msg(cont, stdcl, epollfd);
+        if (res < 0)
+            return;
+    }
+
+    ev_cl->events &= ~EPOLLOUT;
+    epoll_ctl(epollfd, EPOLL_CTL_MOD, stdcl->cl.connection.sock_fd, ev_cl);
+}
+
+static void wt_handle_queued_messages(std_client* stdcl, stdcl_containers* cont, struct epoll_event* ev_cl, int32_t epollfd)
+{
+    if (__atomic_load_n(&stdcl->cl.cl_state, __ATOMIC_SEQ_CST) == DISCONNECTED)
+        return;
+
+    if (stdcl->temp_send_storage)
+    {
+        node* nd = htable_get_cond(cont->std_cl_table, stdcl->temp_send_storage->subject_name, strlen(stdcl->temp_send_storage->subject_name), is_not_disconnected);
+        if (!nd)
+            notify_about_disconnect(stdcl);
+        else
+            node_put(nd);
+
+        int64_t res = send_one_msg(cont, stdcl, epollfd);
+        if (res < 0)
+        {
+            if (res == EBLOCK)
+            {
+                ev_cl->events |= EPOLLOUT;
+                epoll_ctl(epollfd, EPOLL_CTL_MOD, stdcl->cl.connection.sock_fd, ev_cl);
+            }
+            return;
+        }
+    }
+
+    while (true)
+    {
+        mpsc_msg_node* msg = mpscq_dequeue(&stdcl->pending_ctrl_queue);
+        if (!msg)
+            break;
+
+        stdcl->temp_send_storage = msg;
+        int64_t res = send_one_msg(cont, stdcl, epollfd);
+        if (res == EBLOCK)
+        {
+            ev_cl->events |= EPOLLOUT;
+            epoll_ctl(epollfd, EPOLL_CTL_MOD, stdcl->cl.connection.sock_fd, ev_cl);
+        }
+        return;
+    }
+
+    mpsc_msg_node* msg = mpscq_dequeue(&stdcl->pending_userdata_queue);
+    stdcl->temp_send_storage = msg;
+    int64_t res = send_one_msg(cont, stdcl, epollfd);
+    if (res == EBLOCK)
+    {
+        ev_cl->events |= EPOLLOUT;
+        epoll_ctl(epollfd, EPOLL_CTL_MOD, stdcl->cl.connection.sock_fd, ev_cl);
+    }
+
+}
 
 static void wt_handle_clientevent(worker_thrd_ctx* wt_ctx, stdcl_containers* cont, struct epoll_event* ev_cl,
                                   sqlite3_stmt* fetch_stmt, int32_t epollfd)
@@ -422,6 +631,7 @@ static void wt_handle_clientevent(worker_thrd_ctx* wt_ctx, stdcl_containers* con
         cleanup_std_client(cont, &stdcl->nd, epollfd);
 
     uint8_t clstate = __atomic_load_n(&stdcl->cl.cl_state, __ATOMIC_SEQ_CST);
+    bool not_disconnected = true;
 
     if (ev_cl->events & EPOLLIN)
     {
@@ -437,13 +647,13 @@ static void wt_handle_clientevent(worker_thrd_ctx* wt_ctx, stdcl_containers* con
         }
         else if (clstate == AUTHENTICATED)
         {
-            wt_handle_inbound_data();
+            not_disconnected = wt_handle_inbound_data(stdcl, cont, ev_cl, epollfd);
         }
     }
 
-    if (ev_cl->events & EPOLLOUT)
+    if (ev_cl->events & EPOLLOUT && not_disconnected)
     {
-        ;
+        wt_handle_outbound_data(stdcl, cont, ev_cl, epollfd);
     }
 }
 
@@ -563,10 +773,10 @@ void* worker_thrd_routine(void* worker_thread_ctx)
                     wt_handle_shutdown(&cont, auth_stmt, listenerfd, epollfd);
                     dzlog_warn("Worker %hhu shutting down.", wt_ctx->thrd_id);
                     pthread_exit(NULL);
-                    break;
 
                 case EP_QUEUE:
-                    wt_handle_queued_messages();
+                    wt_handle_queued_messages(container_of(std_client, pending_userdata_queue, revents[i].data.ptr),
+                                              &cont, &revents[i], epollfd);
                     break;
 
                 default: break;
