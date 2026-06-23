@@ -3,8 +3,13 @@
 //
 
 #include <stdlib.h>
-#include "zlog.h"
+#include <stdio.h>
 #include "xalloc.h"
+#ifdef LWMSG_SERVER
+#include "zlog.h"
+#else
+#define dzlog_fatal(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
+#endif
 #define ERRMSG "Allocation failed, out of memory. Requested size: %lu"
 
 void* xmalloc(size_t size)

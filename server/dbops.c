@@ -68,7 +68,7 @@ bool validate_auth(sqlite3* dbc, sqlite3_stmt* auth_fetch_stmt, auth_req_group* 
     normalize_string(req->username);
     sqlite3_bind_text(auth_fetch_stmt, i, req->username, -1, SQLITE_STATIC);
     int32_t res = sqlite3_step(auth_fetch_stmt);
-    if (res != SQLITE_DONE)
+    if (res != SQLITE_ROW)
     {
         dzlog_error("Failed to execute query. Reason: %s", sqlite3_errmsg(dbc));
         return false;

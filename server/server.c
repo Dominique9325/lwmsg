@@ -108,7 +108,6 @@ int main(int argc, char** argv)
 
 
 
-    sleep(10);
     //__atomic_store_n(&g_server_cfg->allow_regisrations, false, __ATOMIC_SEQ_CST);
     //eventfd_write(shutdown_efd, 1);
     // sleep(5);

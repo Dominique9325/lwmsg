@@ -8,7 +8,7 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <stdatomic.h>
-#include "misc.h"
+#include "../common/misc.h"
 #define BUF_TOOSMALL (-1)
 #define KEY_SKIP (-2)
 

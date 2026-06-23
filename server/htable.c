@@ -627,7 +627,7 @@ void node_arr_add(node_arr* ndarr, node* nd)
 {
     if (ndarr->elem_cnt == ndarr->size)
     {
-        node** temp = xrealloc(ndarr->nodes, ndarr->size * 2);
+        node** temp = xrealloc(ndarr->nodes, 2 * ndarr->size * sizeof(node*));
         ndarr->nodes = temp;
         ndarr->size *= 2;
     }
@@ -638,7 +638,7 @@ void node_arr_add(node_arr* ndarr, node* nd)
 void node_arr_sweep(striped_htable* cltable, node_arr* ndarr)
 {
     for (uint32_t i = 0; i < ndarr->elem_cnt; i++)
-        htable_remove(cltable, &ndarr->nodes[i]->key, ndarr->nodes[i]->key_size);
+        htable_remove(cltable, ndarr->nodes[i]->key, ndarr->nodes[i]->key_size);
 
     node** temp = xrealloc(ndarr->nodes, DEF_STDCL_DCONARR_SIZE * sizeof(node*));
     ndarr->nodes = temp;

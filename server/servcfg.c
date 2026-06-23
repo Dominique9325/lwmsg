@@ -184,14 +184,14 @@ bool is_if_valid(in_addr_t if_addr)
 
     bool retval = false;
     struct ifaddrs* ifs = NULL;
-    getifaddrs(&ifs);
-    if (!ifs)
+    if (getifaddrs(&ifs) == -1)
         return false;
 
     struct ifaddrs* temp = ifs;
     while (temp)
     {
-        if (temp->ifa_addr && ((struct sockaddr_in*)temp->ifa_addr)->sin_addr.s_addr == if_addr)
+        if (temp->ifa_addr && temp->ifa_addr->sa_family == AF_INET &&
+            ((struct sockaddr_in*)temp->ifa_addr)->sin_addr.s_addr == if_addr)
         {
             retval = true;
             break;

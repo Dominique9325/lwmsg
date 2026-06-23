@@ -10,9 +10,17 @@
 #include <netinet/in.h>
 #include <errno.h>
 #include <openssl/err.h>
+#ifdef LWMSG_SERVER
 #include "zlog.h"
 #include "misc.h"
+#else
+#include <stdio.h>
+#define dzlog_fatal(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
+#define dzlog_warn(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
+#define dzlog_info(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
+#endif
 
+#ifdef LWMSG_SERVER
 int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backlog, bool nonblock, int32_t reuse_port)
 {
     int32_t sock = socket(AF_INET, SOCK_STREAM | (nonblock ? SOCK_NONBLOCK : 0), IPPROTO_TCP);
@@ -63,6 +71,7 @@ int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backl
     close(sock);
     return ERROR;
 }
+#endif
 
 int32_t accept_tcp(conn* c, SSL_CTX* ssl_ctx)
 {
@@ -70,7 +79,27 @@ int32_t accept_tcp(conn* c, SSL_CTX* ssl_ctx)
     return ACCPT_DONE;
 }
 
-//int32_t connect_tcp(uint32_t be_inet4addr, uint16_t le_port);
+int32_t connect_tcp(conn* c, SSL_CTX* ssl_ctx, uint32_t be_inet4addr, uint16_t le_port)
+{
+    (void)ssl_ctx;
+    int32_t sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == ERROR)
+        return ERROR;
+
+    struct timeval tv = {.tv_sec = 5};
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in addr = {.sin_family = AF_INET, .sin_addr.s_addr = be_inet4addr, .sin_port = htons(le_port)};
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == ERROR)
+    {
+        close(sock);
+        return ERROR;
+    }
+
+    c->sock_fd = sock;
+    return 0;
+}
 
 int64_t send_tcp(conn* c, void* buf, uint64_t len)
 {
@@ -107,9 +136,9 @@ int64_t recv_tcp(conn* c, void* buf, uint64_t len)
     return received;
 }
 
-uint64_t avail_data_tcp(conn* c)
+uint32_t avail_data_tcp(conn* c)
 {
-    uint64_t data;
+    uint32_t data;
     ioctl(c->sock_fd, FIONREAD, &data);
     return data;
 }
@@ -117,6 +146,7 @@ uint64_t avail_data_tcp(conn* c)
 void disconnect_tcp(conn* c)
 {
     close(c->sock_fd);
+    c->sock_fd = ERROR;
 }
 
 int32_t accept_tls(conn* c, SSL_CTX* ssl_ctx)
@@ -128,7 +158,10 @@ int32_t accept_tls(conn* c, SSL_CTX* ssl_ctx)
             return ERROR;
 
         if (!SSL_set_fd(ssl, c->sock_fd))
+        {
+            SSL_free(ssl);
             return ERROR;
+        }
 
         c->ssl = ssl;
     }
@@ -151,7 +184,55 @@ int32_t accept_tls(conn* c, SSL_CTX* ssl_ctx)
     return ACCPT_DONE;
 }
 
-int32_t connect_tls(uint32_t be_inet4addr, uint16_t le_port);
+int32_t connect_tls(conn* c, SSL_CTX* ssl_ctx, uint32_t be_inet4addr, uint16_t le_port)
+{
+    int32_t sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == ERROR)
+        return ERROR;
+
+    struct timeval tv = {.tv_sec = 5};
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in addr = {.sin_family = AF_INET, .sin_addr.s_addr = be_inet4addr, .sin_port = htons(le_port)};
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == ERROR)
+    {
+        close(sock);
+        return ERROR;
+    }
+
+    c->sock_fd = sock;
+
+    SSL* ssl = SSL_new(ssl_ctx);
+    if (!ssl)
+    {
+        close(sock);
+        c->sock_fd = ERROR;
+        return ERROR;
+    }
+
+    if (!SSL_set_fd(ssl, sock))
+    {
+        SSL_free(ssl);
+        close(sock);
+        c->sock_fd = ERROR;
+        return ERROR;
+    }
+
+    c->ssl = ssl;
+    int32_t ret = SSL_connect(ssl);
+    if (ret != 1)
+    {
+        ERR_print_errors_fp(stderr);
+        SSL_free(ssl);
+        c->ssl = NULL;
+        close(sock);
+        c->sock_fd = ERROR;
+        return ERROR;
+    }
+
+    return 0;
+}
 
 int64_t send_tls(conn* c, void* buf, uint64_t len)
 {
@@ -189,7 +270,7 @@ int64_t recv_tls(conn* c, void* buf, uint64_t len)
     return res;
 }
 
-uint64_t avail_data_tls(conn* c)
+uint32_t avail_data_tls(conn* c)
 {
     int32_t data = SSL_pending(c->ssl);
     if (data < 0)
@@ -200,10 +281,12 @@ uint64_t avail_data_tls(conn* c)
 
 void disconnect_tls(conn* c)
 {
-    if (c->ssl && SSL_is_init_finished(c->ssl))
+    if (c->ssl)
     {
-        SSL_shutdown(c->ssl);
+        if (SSL_is_init_finished(c->ssl))
+            SSL_shutdown(c->ssl);
         SSL_free(c->ssl);
+        c->ssl = NULL;
     }
 
     close(c->sock_fd);

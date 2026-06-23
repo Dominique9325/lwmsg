@@ -6,6 +6,7 @@
 #define LWMSG_LWMP_H
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <assert.h>
 
 #define UNAMESIZE 32
@@ -88,8 +89,7 @@ typedef struct auth_resp
 
 enum lwmp_flags
 {
-    FLG_REQ_INVAL = 1 << 0U,
-    FLG_
+    FLG_REQ_INVAL = 1 << 0U
 };
 
 extern const uint32_t resp_codes[];
@@ -102,6 +102,8 @@ typedef struct hdr_validation_fns
 {
     bool(*subj_valid_fn)(void* subj_container, char* subj);
     bool(*req_valid_fn)(lwmp_pdu* pdu);
+    bool allow_file_transfers;
+    uint64_t max_filesize_b;
 }hdr_validation_fns;
 
 typedef struct req_opt_data
@@ -145,7 +147,7 @@ typedef struct __attribute__((packed)) lwmp_chunk
     uint32_t ch_hdr_mark;
     uint16_t chunk_size;
     char subject_uname[UNAMESIZE];
-    unsigned char payload[LWMP_MAX_PDU_SIZE];
+    unsigned char payload[LWMP_CHUNK_BUF_SIZE];
 }lwmp_chunk;
 
 static_assert(offsetof(lwmp_chunk, payload) == LWMP_CHUNK_HDR_SIZE, "Incorrect lwmp chunk header size");
@@ -162,5 +164,7 @@ uint8_t lwmp_validate_hdrs(lwmp_pdu* pdu, void* subj_container, char* subject, c
 void lwmp_prepare_response(lwmp_pdu* pdu, uint8_t msg_type, void* optdata, uint8_t optdata_len, char* text);
 
 void lwmp_prepare_chunk(lwmp_chunk* lwc, uint16_t size, char* subject, void* data);
+
+char* strresp(uint32_t resp_code);
 
 #endif //LWMSG_LWMP_H

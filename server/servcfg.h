@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <netinet/in.h>
 #include "netwrap.h"
-#include "misc.h"
+#include "../common/misc.h"
 
 #define CFG_MAX_STRLEN 32
 #define MIN_NONPRIV_PORT 1024

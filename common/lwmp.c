@@ -5,11 +5,15 @@
 
 #include <string.h>
 #include <netinet/in.h>
+#include <endian.h>
 #include <stdbool.h>
 #include "lwmp.h"
-
-#include "servcfg.h"
+#ifdef LWMSG_SERVER
 #include "zlog.h"
+#else
+#include <stdio.h>
+#define dzlog_error(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
+#endif
 
 const uint64_t lwmp_hdr_size = offsetof(lwmp_pdu, buf);
 
@@ -137,17 +141,22 @@ uint8_t lwmp_validate_hdrs(lwmp_pdu* pdu, void* subj_container, char* subject, c
     if (ntohl(pdu->hdr_mark) != PDU_SYNC_HDR_MARK)
         return HV_INVAL_PDU;
 
+    uint32_t orig_le_crc32 = ntohl(pdu->crc32);
+    uint32_t computed_crc32 = crc32(pdu, offsetof(lwmp_pdu, crc32));
+    if (computed_crc32 != orig_le_crc32)
+        return HV_CRCERR;
+
     if (pdu->msg_type != MT_MSG && pdu->msg_type != MT_FILE && pdu->msg_type != MT_REQ)
         return HV_INVAL_PDU;
 
-    if (pdu->msg_type == MT_FILE && !__atomic_load_n(&g_server_cfg->allow_file_transfers, __ATOMIC_SEQ_CST))
+    if (pdu->msg_type == MT_FILE && !hvfns->allow_file_transfers)
         return HV_FILE_NOT_ALLOWED;
 
-    if (__atomic_load_n(&g_server_cfg->allow_file_transfers, __ATOMIC_SEQ_CST) &&
-        ntohl(pdu->total_msg_size) > __atomic_load_n(&g_server_cfg->max_filesize_b, __ATOMIC_SEQ_CST))
+    if (hvfns->allow_file_transfers &&
+        be64toh(pdu->total_msg_size) > hvfns->max_filesize_b)
         return HV_FILE_TOOBIG;
 
-    if (pdu->msg_type != MT_FILE && ntohl(pdu->total_msg_size) > MAX_TEXTMSG_SIZE)
+    if (pdu->msg_type != MT_FILE && be64toh(pdu->total_msg_size) > MAX_TEXTMSG_SIZE)
         return HV_TXTMSG_TOOBIG;
 
     if (pdu->msg_type != MT_REQ && !hvfns->subj_valid_fn(subj_container, subject))
@@ -155,12 +164,6 @@ uint8_t lwmp_validate_hdrs(lwmp_pdu* pdu, void* subj_container, char* subject, c
 
     if (pdu->msg_type == MT_REQ && !hvfns->req_valid_fn(pdu))
         return HV_INVAL_REQ;
-
-    uint32_t orig_le_crc32 = ntohl(pdu->crc32);
-    uint32_t computed_crc32 = crc32(pdu, offsetof(lwmp_pdu, crc32));
-    if (computed_crc32 != orig_le_crc32)
-        return HV_CRCERR;
-
 
     return HV_OK;
 }
@@ -189,8 +192,15 @@ void lwmp_prepare_response(lwmp_pdu* pdu, uint8_t msg_type, void* optdata, uint8
     if (text)
     {
         uint64_t textlen = strlen(text);
-        strcpy((char*)pdu->buf, text);
-        pdu->total_msg_size = htonl(textlen + 1);
+        if (textlen >= LWMP_PDU_BUF_SIZE)
+            textlen = LWMP_PDU_BUF_SIZE - 1;
+        memcpy(pdu->buf, text, textlen);
+        pdu->buf[textlen] = '\0';
+        pdu->total_msg_size = htobe64(textlen + 1);
+    }
+    else
+    {
+        pdu->total_msg_size = 0;
     }
 
     pdu->crc32 = htonl(crc32(pdu, offsetof(lwmp_pdu, crc32)));
@@ -198,8 +208,22 @@ void lwmp_prepare_response(lwmp_pdu* pdu, uint8_t msg_type, void* optdata, uint8
 
 void lwmp_prepare_chunk(lwmp_chunk* lwc, uint16_t size, char* subject, void* data)
 {
+    if (size > LWMP_CHUNK_BUF_SIZE)
+        size = LWMP_CHUNK_BUF_SIZE;
+
     lwc->ch_hdr_mark = htonl(CHUNK_SYNC_HDR_MARK);
     strncpy(lwc->subject_uname, subject, UNAMESIZE);
     lwc->chunk_size = htons(size);
     memcpy(lwc->payload, data, size);
+}
+
+char* strresp(uint32_t resp_code)
+{
+#define X_STRRESP(enumname, respname, respval) case respval : return #respname;
+    switch (resp_code)
+    {
+        X_RESPONSES(X_STRRESP)
+        default: return "RESP_UNKNOWN";
+    }
+#undef X_STRRESP
 }

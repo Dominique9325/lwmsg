@@ -7,6 +7,7 @@
 #include "thrdctx.h"
 #include "worker.h"
 #include <errno.h>
+#include <endian.h>
 #include <arpa/inet.h>
 #include "clhandle.h"
 #include "cltimerheap.h"
@@ -213,6 +214,21 @@ static void wt_handle_authentication(worker_thrd_ctx* wt_ctx, stdcl_containers* 
 
     if (resp_code != AUTH_RESP_OK)
     {
+        node* std_ipbr_node = htable_get(wt_ctx->std_ipblock_tbl, &stdcl->cl.peer_name, sizeof(in_addr_t), true);
+        if (std_ipbr_node)
+        {
+            std_ipb_rec* std_ipbr = container_of(std_ipb_rec, nd, std_ipbr_node);
+            __atomic_fetch_add(&std_ipbr->failed_auths, 1, __ATOMIC_SEQ_CST);
+            node_put(std_ipbr_node);
+        }
+        else
+        {
+            std_ipb_rec* std_ipbr = std_ipb_rec_create(stdcl->cl.peer_name, false);
+            bool res = htable_add(wt_ctx->std_ipblock_tbl, &std_ipbr->nd);
+            if (!res)
+                std_ipbr->nd.free_fn(&std_ipbr->nd);
+        }
+
         auth_send_resp(&stdcl->cl, nfn, resp_code);
         cleanup_std_client(cont, &stdcl->nd, epollfd);
         return;
@@ -274,6 +290,10 @@ static void wt_serve_response(stdcl_containers* cont, std_client* stdcl, mpsc_ms
 
             stdcl->temp_send_storage->buf_offset += data_sent;
         }while (stdcl->temp_send_storage->buf_offset < stdcl->temp_send_storage->buf_size);
+
+        free(stdcl->temp_send_storage->buf);
+        free(stdcl->temp_send_storage);
+        stdcl->temp_send_storage = NULL;
     }
 }
 
@@ -363,7 +383,7 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
                 tmp_rcv_st->dest_uname[UNAMESIZE - 1] = '\0';
             }
 
-            tmp_rcv_st->expected_msg_size = ntohl(pdu->total_msg_size);
+            tmp_rcv_st->expected_msg_size = be64toh(pdu->total_msg_size);
             tmp_rcv_st->total_msg_data_recved = 0;
         }
 
@@ -386,6 +406,12 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
 
         if (tmp_rcv_st->total_msg_data_recved == tmp_rcv_st->expected_msg_size || recvbuf->buf_data_offset == recvbuf->buf_size)
         {
+            hdr_validation_fns hvfns = {
+                .subj_valid_fn = validate_recipient,
+                .req_valid_fn = validate_request,
+                .allow_file_transfers = __atomic_load_n(&g_server_cfg->allow_file_transfers, __ATOMIC_SEQ_CST),
+                .max_filesize_b = __atomic_load_n(&g_server_cfg->max_filesize_b, __ATOMIC_SEQ_CST)
+            };
             uint8_t hdr_val_res = lwmp_validate_hdrs((lwmp_pdu*)recvbuf->buf, cont->std_cl_table, tmp_rcv_st->dest_uname, &hvfns);
             if (hdr_val_res != HV_OK)
             {
@@ -418,7 +444,8 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
                     lwmp_prepare_response((lwmp_pdu*)msg->buf, MT_REQ, &resp_code, sizeof(resp_code), NULL);
                     memcpy(msg->buf + lwmp_hdr_size, reqbuf, reqsize);
                     free(reqbuf);
-                    ((lwmp_pdu*)msg->buf)->total_msg_size = htonl(reqsize);
+                    ((lwmp_pdu*)msg->buf)->total_msg_size = htobe64(reqsize);
+                    ((lwmp_pdu*)msg->buf)->crc32 = htonl(crc32(msg->buf, offsetof(lwmp_pdu, crc32)));
                 }
                 wt_serve_response(cont, stdcl, msg, ev_cl, epollfd);
             }
@@ -429,8 +456,8 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
                 {
                     char text[256];
                     snprintf(text, 256, "Unable to reach recipient %s.", tmp_rcv_st->dest_uname);
-                    mpsc_msg_node* msg = msg_node_create(NULL, lwmp_hdr_size, NULL);
                     uint32_t resp_code = htonl(RESP_DCONN_SUBJ);
+                    mpsc_msg_node* msg = msg_node_create(NULL, lwmp_hdr_size + strlen(text) + 1, NULL);
                     lwmp_prepare_response((lwmp_pdu*)msg->buf, MT_INFO, &resp_code, sizeof(resp_code), text);
                     wt_serve_response(cont, stdcl, msg, ev_cl, epollfd);
                     uint64_t offset = offsetof(curr_recv_msg, expected_msg_size);
@@ -440,6 +467,7 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
                 }
                 mpsc_msg_node* msg = msg_node_create(recvbuf->buf, recvbuf->buf_data_offset, stdcl->username);
                 strncpy(((lwmp_pdu*)msg->buf)->subject_uname, stdcl->username, UNAMESIZE);
+                ((lwmp_pdu*)msg->buf)->crc32 = htonl(crc32(msg->buf, offsetof(lwmp_pdu, crc32)));
                 std_client* rcpt = container_of(std_client, nd, stdclnode);
                 mpscq_enqueue(&rcpt->pending_userdata_queue, msg);
                 node_put(stdclnode);
@@ -481,8 +509,8 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
     {
         char text[256];
         snprintf(text, 256, "Unable to reach recipient %s.", tmp_rcv_st->dest_uname);
-        mpsc_msg_node* msg = msg_node_create(NULL, lwmp_hdr_size, NULL);
         uint32_t resp_code = htonl(RESP_DCONN_SUBJ);
+        mpsc_msg_node* msg = msg_node_create(NULL, lwmp_hdr_size + strlen(text) + 1, NULL);
         lwmp_prepare_response((lwmp_pdu*)msg->buf, MT_INFO, &resp_code, sizeof(resp_code), text);
         wt_serve_response(cont, stdcl, msg, ev_cl, epollfd);
         uint64_t offset = offsetof(curr_recv_msg, expected_msg_size);
@@ -502,7 +530,7 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
     if (tmp_rcv_st->expected_msg_size == tmp_rcv_st->total_msg_data_recved)
     {
         uint64_t offset = offsetof(curr_recv_msg, expected_msg_size);
-        memset(tmp_rcv_st + offset, 0, sizeof(curr_recv_msg) - offset);
+        memset((void*)tmp_rcv_st + offset, 0, sizeof(curr_recv_msg) - offset);
         recvbuf->buf_data_offset = 0;
     }
 
@@ -589,11 +617,14 @@ static void wt_handle_queued_messages(std_client* stdcl, stdcl_containers* cont,
 
     if (stdcl->temp_send_storage)
     {
-        node* nd = htable_get_cond(cont->std_cl_table, stdcl->temp_send_storage->subject_name, strlen(stdcl->temp_send_storage->subject_name), is_not_disconnected);
-        if (!nd)
-            notify_about_disconnect(stdcl);
-        else
-            node_put(nd);
+        if (stdcl->temp_send_storage->subject_name[0] != '\0')
+        {
+            node* nd = htable_get_cond(cont->std_cl_table, stdcl->temp_send_storage->subject_name, strlen(stdcl->temp_send_storage->subject_name), is_not_disconnected);
+            if (!nd)
+                notify_about_disconnect(stdcl);
+            else
+                node_put(nd);
+        }
 
         int64_t res = send_one_msg(cont, stdcl, epollfd);
         if (res < 0)
@@ -753,7 +784,7 @@ void* worker_thrd_routine(void* worker_thread_ctx)
     int32_t qres = sqlite3_prepare_v2(wt_ctx->db_rdonly_handle, FETCH_QUERY, -1, &auth_stmt, NULL);
     if (qres != SQLITE_OK)
     {
-        dzlog_fatal("Failed to prepare SQL statement for registration. Cause: %s", sqlite3_errmsg(wt_ctx->db_rdonly_handle));
+        dzlog_fatal("Failed to prepare SQL statement for authentication. Cause: %s", sqlite3_errmsg(wt_ctx->db_rdonly_handle));
         epoll_ctl(epollfd, EPOLL_CTL_DEL, wt_ctx->flg_shutdown, NULL);
         close(epollfd);
         close(listenerfd);

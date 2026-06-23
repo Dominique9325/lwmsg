@@ -143,6 +143,8 @@ mpsc_msg_node* msg_node_create(void* buf, uint64_t buf_size, char* subject_name)
 
     if (subject_name)
         strncpy(msg->subject_name, subject_name, UNAMESIZE);
+    else
+        msg->subject_name[0] = '\0';
 
     if (buf)
         memcpy(msg->buf, buf, buf_size);

@@ -16,7 +16,7 @@
 #include "thrdctx.h"
 #include "clhandle.h"
 #include "cltimerheap.h"
-#include "misc.h"
+#include "../common/misc.h"
 #include "xalloc.h"
 #include "ipblock.h"
 #include "dbops.h"

@@ -48,8 +48,6 @@ enum client_state
     AUTHENTICATED
 };
 
-extern const hdr_validation_fns hvfns;
-
 typedef struct curr_recv_msg
 {
     buffer recvbuf;

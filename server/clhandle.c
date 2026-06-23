@@ -8,8 +8,6 @@
 #include "servcfg.h"
 #include "xalloc.h"
 
-const hdr_validation_fns hvfns = {.req_valid_fn = validate_request, .subj_valid_fn = validate_recipient };
-
 reg_client_list* list_create()
 {
     reg_client_list* list = (reg_client_list*)xcalloc(1, sizeof(reg_client_list));
@@ -60,7 +58,9 @@ int32_t std_client_cmp(const void* cla, const void* clb, uint32_t lena, uint32_t
     const char* unamea = (const char*)cla;
     const char* unameb = (const char*)clb;
     int32_t res = strncmp(unamea, unameb, lena < lenb ? lena : lenb);
-    return res;
+    if (res)
+        return res;
+    return (int32_t)lena - (int32_t)lenb;
 }
 
 void auth_send_resp(client* cl, net_fns* nfn, uint32_t resp_type)

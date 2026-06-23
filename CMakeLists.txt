@@ -25,8 +25,8 @@ add_executable(lwmsg-server server/server.c
         server/clhandle.h
         server/htable.c
         server/htable.h
-        server/misc.c
-        server/misc.h
+        common/misc.c
+        common/misc.h
         common/lwmp.c
         common/lwmp.h
         server/registration.c
@@ -46,6 +46,13 @@ add_executable(lwmsg-server server/server.c
         server/dbops.c
         server/dbops.h)
 add_executable(lwmsg-client client/client.c
+        client/client.h
+        client/clnet.c
+        client/clnet.h
+        client/clcmd.c
+        client/clcmd.h
+        client/clrecv.c
+        client/clrecv.h
         common/netwrap.c
         common/netwrap.h
         common/lwmp.c
@@ -57,6 +64,8 @@ add_executable(lwmsg-client client/client.c
 
 target_include_directories(lwmsg-server PRIVATE server common)
 target_include_directories(lwmsg-client PRIVATE client common)
+
+target_compile_definitions(lwmsg-server PRIVATE LWMSG_SERVER)
 
 target_link_libraries(lwmsg-server ${SERVER_LIBS})
 target_link_libraries(lwmsg-client ${COMMON_LIBS})

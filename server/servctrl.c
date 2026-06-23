@@ -91,5 +91,5 @@ int32_t ctrl_read_cmd(int32_t sockfd, void* buf, int32_t bufsize)
     if (!bytes_read || (bytes_read == ERROR && (error = errno) != EAGAIN))
         return ERROR;
 
-
+    return total_read;
 }

@@ -22,10 +22,10 @@ typedef struct conn
 typedef struct net_fns
 {
     int32_t(*accept_fn)(conn* c, SSL_CTX* ssl_ctx);
-    int32_t(*connect_fn)(uint32_t be_inet4addr, uint16_t le_port);
+    int32_t(*connect_fn)(conn* c, SSL_CTX* ssl_ctx, uint32_t be_inet4addr, uint16_t le_port);
     int64_t(*send_fn)(conn* c, void* buf, uint64_t len);
     int64_t(*recv_fn)(conn* c, void* buf, uint64_t len);
-    uint64_t(*avail_data_fn)(conn* c);
+    uint32_t(*avail_data_fn)(conn* c);
     void(*disconnect_fn)(conn* c);
 }net_fns;
 
@@ -35,13 +35,13 @@ int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backl
 // Plain TCP networking function wrappers:
 int32_t accept_tcp(conn* c, SSL_CTX* ssl_ctx);
 
-int32_t connect_tcp(uint32_t be_inet4addr, uint16_t le_port);
+int32_t connect_tcp(conn* c, SSL_CTX* ssl_ctx, uint32_t be_inet4addr, uint16_t le_port);
 
 int64_t send_tcp(conn* c, void* buf, uint64_t len);
 
 int64_t recv_tcp(conn* c, void* buf, uint64_t len);
 
-uint64_t avail_data_tcp(conn* c);
+uint32_t avail_data_tcp(conn* c);
 
 void disconnect_tcp(conn* c);
 
@@ -49,13 +49,13 @@ void disconnect_tcp(conn* c);
 // TLS networking function wrappers:
 int32_t accept_tls(conn* c, SSL_CTX* ssl_ctx);
 
-int32_t connect_tls(uint32_t be_inet4addr, uint16_t le_port);
+int32_t connect_tls(conn* c, SSL_CTX* ssl_ctx, uint32_t be_inet4addr, uint16_t le_port);
 
 int64_t send_tls(conn* c, void* buf, uint64_t len);
 
 int64_t recv_tls(conn* c, void* buf, uint64_t len);
 
-uint64_t avail_data_tls(conn* c);
+uint32_t avail_data_tls(conn* c);
 
 void disconnect_tls(conn* c);
 
