@@ -19,6 +19,7 @@
 #define THRDNAME_LEN 16
 #define MAX_REVENTS 1024
 #define WORKER_BACKLOG 1024
+#define min(a, b) (a < b ? a : b)
 
 typedef struct stdcl_containers
 {
@@ -156,40 +157,293 @@ static void wt_handle_new_connections(worker_thrd_ctx* wt_ctx, stdcl_containers*
     }
 }
 
-static void wt_handle_clientevent(worker_thrd_ctx* wt_ctx, stdcl_containers* cont,  struct epoll_event* ev_cl, int32_t epollfd)
+static void wt_handle_accepting(stdcl_containers* cont, worker_thrd_ctx* wt_ctx, std_client* stdcl, int32_t epollfd)
 {
-    std_client* stdcl = (std_client*)ev_cl->data.ptr;
     net_fns* nfn = &g_server_cfg->networking_functions;
 
-    if (ev_cl->events & (EPOLLHUP | EPOLLERR))
+    int32_t ares = nfn->accept_fn(&stdcl->cl.connection, wt_ctx->ssl_ctx);
+    if (ares == ERROR)
     {
-        if (ev_cl->events & EPOLLHUP && __atomic_load_n(&stdcl->cl.cl_state, __ATOMIC_SEQ_CST) >= AUTHENTICATED)
-        {
-            uint64_t remaining_data = nfn->avail_data_fn(&stdcl->cl.connection);
-            curr_recv_msg* crm = &stdcl->cl.temp_recv_storage;
+        cleanup_std_client(cont, &stdcl->nd, epollfd);
+    }
+    else if (ares == ACCPT_DONE)
+        __atomic_store_n(&stdcl->cl.cl_state, ACCEPTED, __ATOMIC_SEQ_CST);
+}
 
-            uint32_t pdu_size_left = crm->recvbuf.buf_size - crm->recvbuf.buf_data_offset;
-            node* dst_cl_nd = htable_get_cond(cont->std_cl_table, crm->dest_uname, UNAMESIZE, is_not_disconnected);
-            if (!crm->msg_id || crm->msg_type == MT_REQ || remaining_data > pdu_size_left || !dst_cl_nd ||
-                crm->total_msg_data_recved + remaining_data < crm->expected_msg_size)
+static void wt_handle_authentication(worker_thrd_ctx* wt_ctx, stdcl_containers* cont, std_client* stdcl,
+                                     sqlite3_stmt* fetch_stmt, int32_t epollfd)
+{
+    net_fns* nfn = &g_server_cfg->networking_functions;
+    curr_recv_msg* recv_storage = &stdcl->cl.temp_recv_storage;
+    buffer* recvbuf = &recv_storage->recvbuf;
+    do
+    {
+        int64_t data_recved = nfn->recv_fn(&stdcl->cl.connection, recvbuf->buf + recvbuf->buf_data_offset,
+                                           sizeof(auth_req_group) - recvbuf->buf_data_offset);
+        if (data_recved == ERROR)
+        {
+            cleanup_std_client(cont, &stdcl->nd, epollfd);
+            return;
+        }
+        if (data_recved == EBLOCK)
+            return;
+
+        recvbuf->buf_data_offset += data_recved;
+    }while (recvbuf->buf_data_offset < sizeof(auth_req_group));
+
+    auth_req_group* auth_req = (auth_req_group*)recvbuf->buf;
+    uint32_t resp_code = AUTH_RESP_OK;
+
+    if (ntohl(auth_req->request_type) != REQ_AUTHENTICATION)
+    {
+        resp_code = AUTH_RESP_INVAL_REQ;
+    }
+    else if (htable_get(cont->std_cl_table, auth_req->username, strlen(auth_req->username), false))
+    {
+        resp_code = AUTH_RESP_DUPLICATE;
+    }
+    else
+    {
+        bool auth_res = validate_auth(wt_ctx->db_rdonly_handle, fetch_stmt, auth_req);
+        if (!auth_res)
+            resp_code = AUTH_RESP_INVAL_PARAM;
+    }
+
+    if (resp_code != AUTH_RESP_OK)
+    {
+        auth_send_resp(&stdcl->cl, nfn, resp_code);
+        cleanup_std_client(cont, &stdcl->nd, epollfd);
+        return;
+    }
+
+    mpscq_create(&stdcl->pending_userdata_queue, MODE_MPSC);
+    mpscq_create(&stdcl->pending_ctrl_queue, MODE_SPSC);
+    cl_timerheap_remove(cont->clth, &stdcl->cl);
+    intrusive_list_remove(cont->preauth_list, &stdcl->nd);
+    uint32_t unamelen = strnlen(auth_req->username, UNAMESIZE);
+    strncpy(stdcl->username, auth_req->username, UNAMESIZE);
+    stdcl->nd.key_size = unamelen;
+    bool res = htable_add(cont->std_cl_table, &stdcl->nd);
+
+    if (!res)
+    {
+        mpscq_destroy(&stdcl->pending_ctrl_queue);
+        mpscq_destroy(&stdcl->pending_userdata_queue);
+        auth_send_resp(&stdcl->cl, nfn, AUTH_RESP_DUPLICATE);
+        cleanup_std_client(cont, &stdcl->nd, epollfd);
+        return;
+    }
+
+    auth_send_resp(&stdcl->cl, nfn, resp_code);
+    __atomic_store_n(&stdcl->cl.cl_state, AUTHENTICATED, __ATOMIC_SEQ_CST);
+    recvbuf->buf_data_offset = 0;
+}
+
+static void wt_serve_response(stdcl_containers* cont, std_client* stdcl, mpsc_msg_node* msg,
+                              struct epoll_event* ev_cl, int32_t epollfd)
+{
+    net_fns* nfn = &g_server_cfg->networking_functions;
+    if (stdcl->temp_send_storage)
+    {
+        mpscq_enqueue(&stdcl->pending_ctrl_queue, msg);
+    }
+    else
+    {
+        stdcl->temp_send_storage = msg;
+        do
+        {
+            int64_t data_sent = nfn->send_fn(&stdcl->cl.connection, msg->buf + msg->buf_offset,
+                msg->buf_size - msg->buf_offset);
+
+            if (data_sent == ERROR)
             {
-                if (dst_cl_nd)
-                    node_put(dst_cl_nd);
+                cleanup_std_client(cont, &stdcl->nd, epollfd);
+            }
+            else if (data_sent == EBLOCK)
+            {
+                ev_cl->events |= EPOLLOUT;
+                epoll_ctl(epollfd, EPOLL_CTL_MOD, stdcl->cl.connection.sock_fd, ev_cl);
+            }
+
+            stdcl->temp_send_storage->buf_offset += data_sent;
+        }while (stdcl->temp_send_storage->buf_offset < stdcl->temp_send_storage->buf_size);
+    }
+}
+
+static uint64_t handle_request(lwmp_pdu* pdu, stdcl_containers* cont, void** reqbuf)
+{
+    uint32_t req_type = ntohl(pdu->request.req_type);
+    uint64_t reqsize;
+    switch (req_type)
+    {
+        case REQ_USER_LIST:
+            reqsize = htable_copy_all_keys(cont->std_cl_table, reqbuf, node_copy_username);
+            return reqsize;
+
+        default: return 0;
+    }
+}
+
+static void wt_handle_inbound_data(worker_thrd_ctx* wt_ctx, std_client* stdcl, stdcl_containers* cont, struct epoll_event* ev_cl,
+                                  sqlite3_stmt* fetch_stmt, int32_t epollfd)
+{
+    curr_recv_msg* tmp_rcv_st = &stdcl->cl.temp_recv_storage;
+    buffer* recvbuf = &tmp_rcv_st->recvbuf;
+    net_fns* nfn = &g_server_cfg->networking_functions;
+
+    if (tmp_rcv_st->not_msg_init_pdu)
+    {
+
+
+        while (recvbuf->buf_data_offset < LWMP_HDR_SIZE)
+        {
+            int64_t recved_data = nfn->recv_fn(&stdcl->cl.connection, recvbuf->buf + recvbuf->buf_data_offset, LWMP_HDR_SIZE - recvbuf->buf_data_offset);
+            if (recved_data == ERROR)
+            {
                 cleanup_std_client(cont, &stdcl->nd, epollfd);
                 return;
             }
 
+            if (recved_data == EBLOCK)
+                return;
 
-            std_client* dest_stdcl = container_of(std_client, nd, dst_cl_nd);
-            uint32_t buf_offset = stdcl->cl.temp_recv_storage.recvbuf.buf_data_offset;
-            int64_t data_recved = nfn->recv_fn(&stdcl->cl.connection, stdcl->cl.temp_recv_storage.recvbuf.buf + buf_offset, pdu_size_left);
-            crm->recvbuf.buf_data_offset += data_recved;
-            mpsc_msg_node* msg = msg_node_create(crm->recvbuf.buf, crm->recvbuf.buf_data_offset);
-            mpscq_enqueue(&dest_stdcl->pending_userdata_queue, msg);
-            node_put(dst_cl_nd);
+            recvbuf->buf_data_offset += recved_data;
         }
 
+        if (!tmp_rcv_st->msg_type && !tmp_rcv_st->expected_msg_size)
+        {
+            lwmp_pdu* pdu = (lwmp_pdu*)recvbuf->buf;
+            tmp_rcv_st->msg_type = pdu->msg_type;
+            if (tmp_rcv_st->msg_type != MT_REQ)
+            {
+                memcpy(tmp_rcv_st->dest_uname, pdu->subject_uname, UNAMESIZE);
+                tmp_rcv_st->dest_uname[UNAMESIZE - 1] = '\0';
+            }
+
+            tmp_rcv_st->expected_msg_size = ntohl(pdu->total_msg_size);
+            tmp_rcv_st->total_msg_data_recved = 0;
+        }
+
+        while (recvbuf->buf_data_offset < min(lwmp_hdr_size + tmp_rcv_st->expected_msg_size, recvbuf->buf_size))
+        {
+            int64_t recved_data = nfn->recv_fn(&stdcl->cl.connection, recvbuf->buf + recvbuf->buf_data_offset,
+               min(tmp_rcv_st->expected_msg_size - tmp_rcv_st->total_msg_data_recved, recvbuf->buf_size - recvbuf->buf_data_offset));
+
+            if (recved_data == ERROR)
+            {
+                cleanup_std_client(cont, &stdcl->nd, epollfd);
+                return;
+            }
+            else if (recved_data == EBLOCK)
+                return;
+
+            recvbuf->buf_data_offset += recved_data;
+            tmp_rcv_st->total_msg_data_recved += recved_data;
+        }
+
+        if (tmp_rcv_st->total_msg_data_recved == tmp_rcv_st->expected_msg_size || recvbuf->buf_data_offset == recvbuf->buf_size)
+        {
+            uint8_t hdr_val_res = lwmp_validate_hdrs((lwmp_pdu*)recvbuf->buf, cont->std_cl_table, tmp_rcv_st->dest_uname, &hvfns);
+            if (hdr_val_res != HV_OK)
+            {
+                uint32_t resp = htonl(resp_codes[hdr_val_res]);
+                mpsc_msg_node* msg = msg_node_create(NULL, lwmp_hdr_size, NULL);
+                lwmp_prepare_response((lwmp_pdu*)msg->buf, MT_INFO, &resp, sizeof(resp), NULL);
+                wt_serve_response(cont, stdcl, msg, ev_cl, epollfd);
+            }
+            else if (tmp_rcv_st->msg_type == MT_REQ)
+            {
+                void* reqbuf;
+                uint64_t reqsize = handle_request((lwmp_pdu*)recvbuf->buf, cont, &reqbuf);
+                mpsc_msg_node* msg;
+                if (!reqsize)
+                {
+                    char* resptext = "Failed to process request.";
+                    uint32_t resp_code = htonl(RESP_INVAL_REQ);
+                    uint8_t resptext_len = strlen(resptext) + 1;
+                    msg = msg_node_create(NULL, lwmp_hdr_size + resptext_len, NULL);
+                    lwmp_prepare_response((lwmp_pdu*)msg->buf, MT_INFO, &resp_code, sizeof(resp_code), resptext);
+                }
+                else
+                {
+                    uint32_t resp_code = htonl(RESP_OK);
+                    msg = msg_node_create(NULL, lwmp_hdr_size + reqsize, NULL);
+                    lwmp_prepare_response((lwmp_pdu*)msg->buf, MT_REQ, &resp_code, sizeof(resp_code), NULL);
+                    memcpy(msg->buf + lwmp_hdr_size, reqbuf, reqsize);
+                    ((lwmp_pdu*)msg->buf)->total_msg_size = reqsize;
+                }
+                wt_serve_response(cont, stdcl, msg, ev_cl, epollfd);
+            }
+            else
+            {
+                mpsc_msg_node* msg = msg_node_create(recvbuf->buf, recvbuf->buf_data_offset, tmp_rcv_st->dest_uname);
+                mpscq_enqueue(&stdcl->pending_userdata_queue, msg);
+            }
+
+            if (tmp_rcv_st->total_msg_data_recved == tmp_rcv_st->expected_msg_size)
+            {
+                uint64_t offset = offsetof(curr_recv_msg, expected_msg_size);
+                memset(tmp_rcv_st + offset, 0, sizeof(curr_recv_msg) - offset);
+                recvbuf->buf_data_offset = 0;
+            }
+            else
+                tmp_rcv_st->not_msg_init_pdu = true;
+        }
+        return;
+    }
+
+
+    while (tmp_rcv_st->total_msg_data_recved < tmp_rcv_st->expected_msg_size && recvbuf->buf_data_offset < recvbuf->buf_size)
+    {
+        uint32_t offset = recvbuf->buf_data_offset;
+        uint64_t dataleft = tmp_rcv_st->expected_msg_size - tmp_rcv_st->total_msg_data_recved;
+        int64_t recved_data = nfn->recv_fn(&stdcl->cl.connection, recvbuf->buf + offset, min(dataleft, recvbuf->buf_size - offset));
+        if (recved_data == ERROR)
+        {
+            cleanup_std_client(cont, &stdcl->nd, epollfd);
+            return;
+        }
+        else if (recved_data == EBLOCK)
+            return;
+
+        recvbuf->buf_data_offset += recved_data;
+        tmp_rcv_st->total_msg_data_recved += recved_data;
+    }
+
+}
+
+
+static void wt_handle_clientevent(worker_thrd_ctx* wt_ctx, stdcl_containers* cont, struct epoll_event* ev_cl,
+                                  sqlite3_stmt* fetch_stmt, int32_t epollfd)
+{
+    std_client* stdcl = (std_client*)ev_cl->data.ptr;
+
+    if (ev_cl->events & (EPOLLHUP | EPOLLERR))
         cleanup_std_client(cont, &stdcl->nd, epollfd);
+
+    uint8_t clstate = __atomic_load_n(&stdcl->cl.cl_state, __ATOMIC_SEQ_CST);
+
+    if (ev_cl->events & EPOLLIN)
+    {
+        if (clstate == ACCEPTING)
+        {
+            wt_handle_accepting(cont, wt_ctx, stdcl, epollfd);
+            return;
+        }
+        else if (clstate == ACCEPTED)
+        {
+            wt_handle_authentication(wt_ctx, cont, stdcl, fetch_stmt, epollfd);
+            return;
+        }
+        else if (clstate == AUTHENTICATED)
+        {
+            wt_handle_inbound_data();
+        }
+    }
+
+    if (ev_cl->events & EPOLLOUT)
+    {
+        ;
     }
 }
 
@@ -302,7 +556,7 @@ void* worker_thrd_routine(void* worker_thread_ctx)
                     break;
 
                 case EP_CLIENT:
-                    wt_handle_clientevent();
+                    wt_handle_clientevent(wt_ctx, &cont, &revents[i], auth_stmt, epollfd);
                     break;
 
                 case EP_EVENT:

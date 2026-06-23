@@ -16,6 +16,7 @@
 #define FNV1A_32_OFFSET_BASIS 0x811C9DC5
 #define C_THRES_ELEM(thres_factor, bucket_count) ((bucket_count) * (thres_factor) / 100)
 
+
 struct striped_htable
 {
     node **buckets;
@@ -474,6 +475,54 @@ node* htable_get_cond(striped_htable* htable, const void* key, uint32_t len, boo
     return NULL;
 }
 
+uint64_t htable_copy_all_keys(striped_htable* htable, void** pkeybuf, int32_t(*copy_fn)(node* nd, void* buf, uint64_t bufsize))
+{
+    pthread_rwlock_rdlock(&htable->g_resize_lock);
+    if (!htable->bucket_count || !__atomic_load_n(&htable->element_count, __ATOMIC_SEQ_CST))
+    {
+        pthread_rwlock_unlock(&htable->g_resize_lock);
+        return 0;
+    }
+
+    uint64_t buf_offset = 0;
+    uint64_t buf_size = 1024;
+    void* buf = xmalloc(buf_size);
+
+    for (uint64_t i = 0; i < htable->lock_count; i++)
+    {
+        pthread_rwlock_rdlock(&htable->locks[i]);
+        for (uint64_t j = i << htable->buckets_per_lock_pow2; j < ((i + 1) << htable->buckets_per_lock_pow2); j++)
+        {
+            node* iterator_node = htable->buckets[j];
+            while (iterator_node)
+            {
+                int32_t data_copied = copy_fn(iterator_node, buf + buf_offset, buf_size - buf_offset);
+                while (data_copied == BUF_TOOSMALL)
+                {
+                    buf_size <<= 1;
+                    void* temp = xrealloc(buf, buf_size);
+                    buf = temp;
+                    data_copied = copy_fn(iterator_node, buf + buf_offset, buf_size - buf_offset);
+                }
+                if (data_copied != KEY_SKIP)
+                    buf_offset += data_copied;
+
+                iterator_node = iterator_node->next;
+            }
+        }
+        pthread_rwlock_unlock(&htable->locks[i]);
+    }
+    pthread_rwlock_unlock(&htable->g_resize_lock);
+
+    if (!buf_offset)
+    {
+        free(buf);
+        buf = NULL;
+    }
+
+    *pkeybuf = buf;
+    return buf_offset;
+}
 
 void node_get(node *n)
 {

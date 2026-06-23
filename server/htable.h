@@ -9,6 +9,8 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include "misc.h"
+#define BUF_TOOSMALL (-1)
+#define KEY_SKIP (-2)
 
 #define container_of(parent_type, member_name, member_ptr) \
     (parent_type *)((char *)(member_ptr) - offsetof(parent_type, member_name))
@@ -49,6 +51,8 @@ void htable_remove(striped_htable* htable, const void* key, uint32_t key_size);
 node* htable_get(striped_htable* htable, const void* key, uint32_t len, bool ref_inc);
 
 node* htable_get_cond(striped_htable* htable, const void* key, uint32_t len, bool(*cond_fn)(node* nd));
+
+uint64_t htable_copy_all_keys(striped_htable* htable, void** pkeybuf, int32_t(*copy_fn)(node* nd, void* buf, uint64_t bufsize));
 
 void node_get(node* n);
 

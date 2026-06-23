@@ -48,15 +48,15 @@ enum client_state
     AUTHENTICATED
 };
 
-extern ATOMIC uint64_t curr_msg_id;
+extern const hdr_validation_fns hvfns;
 
 typedef struct curr_recv_msg
 {
     buffer recvbuf;
     uint64_t expected_msg_size;
     uint64_t total_msg_data_recved;
-    uint32_t msg_id;
     uint32_t msg_type;
+    bool not_msg_init_pdu;
     char dest_uname[UNAMESIZE];
 }curr_recv_msg;
 
@@ -112,5 +112,11 @@ void auth_send_resp(client* cl, net_fns* nfn, uint32_t resp_type);
 std_client* create_std_client(in_addr_t peer_name, int32_t clsock, uint8_t owner_thrd_id);
 
 bool is_not_disconnected(node* nd);
+
+int32_t node_copy_username(node* nd, void* buf, uint64_t buf_size);
+
+bool validate_recipient(void* htable, char* rcpt_uname);
+
+bool validate_request(lwmp_pdu* pdu);
 
 #endif //LWMSG_CLHANDLE_H

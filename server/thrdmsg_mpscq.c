@@ -19,6 +19,7 @@ bool mpscq_create(mpsc_msg_queue* dest, uint8_t queue_mode)
 {
     mpsc_msg_queue temp = {.qmode = queue_mode, .tail = NULL, .head = {0}, .ep_type = EP_QUEUE};
     *dest = temp;
+
     if (queue_mode == MODE_MPSC)
     {
         dest->eventfd = eventfd(0, EFD_SEMAPHORE | EFD_NONBLOCK);
@@ -129,7 +130,7 @@ int32_t mpscq_get_efd(mpsc_msg_queue* mpscq)
     return mpscq->eventfd;
 }
 
-mpsc_msg_node* msg_node_create(void* buf, uint64_t buf_size)
+mpsc_msg_node* msg_node_create(void* buf, uint64_t buf_size, char* subject_name)
 {
     mpsc_msg_node* msg = (mpsc_msg_node*)xmalloc(sizeof(mpsc_msg_node));
     *msg = (mpsc_msg_node){
@@ -140,6 +141,10 @@ mpsc_msg_node* msg_node_create(void* buf, uint64_t buf_size)
         .next = NULL
     };
 
-    memcpy(msg->buf, buf, buf_size);
+    if (subject_name)
+        strncpy(msg->subject_name, subject_name, UNAMESIZE);
+
+    if (buf)
+        memcpy(msg->buf, buf, buf_size);
     return msg;
 }
