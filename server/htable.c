@@ -8,7 +8,7 @@
 #include <stdbool.h>
 #include <assert.h>
 #include "htable.h"
-
+#include "zlog.h"
 #include "clhandle.h"
 #include "xalloc.h"
 
@@ -637,9 +637,13 @@ void node_arr_add(node_arr* ndarr, node* nd)
 
 void node_arr_sweep(striped_htable* cltable, node_arr* ndarr)
 {
-    for (uint32_t i = 0; i < ndarr->elem_cnt; i++)
+    uint32_t i;
+    for (i = 0; i < ndarr->elem_cnt; i++)
         htable_remove(cltable, ndarr->nodes[i]->key, ndarr->nodes[i]->key_size);
 
+
+    if (i)
+        dzlog_debug("Cleaned up %u clients in sweep.", i);
     node** temp = xrealloc(ndarr->nodes, DEF_STDCL_DCONARR_SIZE * sizeof(node*));
     ndarr->nodes = temp;
     ndarr->size = DEF_STDCL_DCONARR_SIZE;

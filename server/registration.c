@@ -423,7 +423,8 @@ void* reg_thrd_routine(void* reg_thread_ctx)
         int64_t clth_root_timediff = handle_clth_timeout(list, &clth, epollfd);
         dzlog_debug("Waittime = %ld", clth_root_timediff);
         int32_t num_events = epoll_wait(epollfd, revents, MAX_REVENTS, (int32_t)clth_root_timediff);
-
+        if (num_events == ERROR && errno == EINTR)
+            continue;
         for (uint32_t i = 0; i < num_events; i++)
         {
             epoll_ctx* ectx = (epoll_ctx*)revents[i].data.ptr;

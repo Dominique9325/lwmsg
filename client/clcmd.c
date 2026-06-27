@@ -1,5 +1,7 @@
 #include "clcmd.h"
+#include "clrecv.h"
 #include "clnet.h"
+#include "clio.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +15,10 @@
 #include <endian.h>
 #include <netinet/in.h>
 #include "util.h"
+
+#define DEFAULT_HOST "lwmsg.duckdns.org"
+#define DEFAULT_PORT_CONNECT 7228
+#define DEFAULT_PORT_REGISTER 6671
 
 int32_t tokenize(char* line, char** tokens, int32_t max_tokens)
 {
@@ -62,25 +68,47 @@ char* rest_after_tokens(char* line, int32_t skip)
     return p;
 }
 
+static bool parse_target(char** tokens, int32_t ntokens, uint16_t default_port, const char** host,
+                         uint16_t* port, const char** username, const char** password)
+{
+    if (ntokens >= 2 && strcmp(tokens[1], "defaulthost") == 0)
+    {
+        if (ntokens < 4) return false;
+        *host = DEFAULT_HOST;
+        *port = default_port;
+        *username = tokens[2];
+        *password = tokens[3];
+        return true;
+    }
+
+    if (ntokens < 5) return false;
+    int32_t p = atoi(tokens[2]);
+    if (p <= 0 || p > 65535) return false;
+    *host = tokens[1];
+    *port = (uint16_t)p;
+    *username = tokens[3];
+    *password = tokens[4];
+    return true;
+}
+
 static void cmd_connect(client_ctx* ctx, char** tokens, int32_t ntokens)
 {
     if (ctx->state != ST_DISCONNECTED)
     {
-        printf("Already connected. Disconnect first.\n");
+        clio_print("Already connected. Disconnect first.\n");
         return;
     }
-    if (ntokens < 5)
+
+    const char* host;
+    uint16_t port;
+    const char* username;
+    const char* password;
+    if (!parse_target(tokens, ntokens, DEFAULT_PORT_CONNECT, &host, &port, &username, &password))
     {
-        printf("Usage: connect <host> <port> <username> <password>\n");
+        clio_print("Usage: connect <host> <port> <username> <password>\n"
+                   "   or: connect defaulthost <username> <password>\n");
         return;
     }
-
-    const char* host = tokens[1];
-    uint16_t port = (uint16_t)atoi(tokens[2]);
-    const char* username = tokens[3];
-    const char* password = tokens[4];
-
-    if (!port) { printf("Invalid port.\n"); return; }
 
     uint32_t addr;
     if (resolve_host(host, &addr) < 0) return;
@@ -90,17 +118,17 @@ static void cmd_connect(client_ctx* ctx, char** tokens, int32_t ntokens)
     else
         load_tcp_fns(&ctx->nfns);
 
-    printf("Connecting to %s:%u...\n", host, port);
+    clio_print("Connecting to %s:%u...\n", host, port);
     if (ctx->nfns.connect_fn(&ctx->connection, ctx->ssl_ctx, addr, port) < 0)
     {
-        fprintf(stderr, "Connection failed.\n");
+        clio_print("Connection failed.\n");
         return;
     }
 
     if (ctx->use_tls)
-        printf("TLS handshake OK.\n");
+        clio_print("TLS handshake OK.\n");
 
-    printf("Authenticating as %s...\n", username);
+    clio_print("Authenticating as %s...\n", username);
     if (do_auth(&ctx->connection, &ctx->nfns, REQ_AUTHENTICATION, username, password) < 0)
     {
         ctx->nfns.disconnect_fn(&ctx->connection);
@@ -121,23 +149,28 @@ static void cmd_connect(client_ctx* ctx, char** tokens, int32_t ntokens)
 
     ctx->state = ST_CONNECTED;
     ctx->recv_len = 0;
-    printf("Connected as %s.\n", ctx->username);
+    strncpy(ctx->server_host, host, sizeof(ctx->server_host) - 1);
+    ctx->server_host[sizeof(ctx->server_host) - 1] = '\0';
+
+    char prompt[INPUT_LINE_MAX];
+    snprintf(prompt, sizeof(prompt), "%s@%s> ", ctx->username, ctx->server_host);
+    clio_set_prompt(prompt);
+
+    clio_print("Connected as %s.\n", ctx->username);
 }
 
 static void cmd_register(client_ctx* ctx, char** tokens, int32_t ntokens)
 {
-    if (ntokens < 5)
+    const char* host;
+    uint16_t port;
+    const char* username;
+    const char* password;
+    if (!parse_target(tokens, ntokens, DEFAULT_PORT_REGISTER, &host, &port, &username, &password))
     {
-        printf("Usage: register <host> <port> <username> <password>\n");
+        clio_print("Usage: register <host> <port> <username> <password>\n"
+                   "   or: register defaulthost <username> <password>\n");
         return;
     }
-
-    const char* host = tokens[1];
-    uint16_t port = (uint16_t)atoi(tokens[2]);
-    const char* username = tokens[3];
-    const char* password = tokens[4];
-
-    if (!port) { printf("Invalid port.\n"); return; }
 
     uint32_t addr;
     if (resolve_host(host, &addr) < 0) return;
@@ -150,10 +183,10 @@ static void cmd_register(client_ctx* ctx, char** tokens, int32_t ntokens)
     else
         load_tcp_fns(&nfns);
 
-    printf("Connecting to %s:%u for registration...\n", host, port);
+    clio_print("Connecting to %s:%u for registration...\n", host, port);
     if (nfns.connect_fn(&c, ctx->ssl_ctx, addr, port) < 0)
     {
-        fprintf(stderr, "Connection failed.\n");
+        clio_print("Connection failed.\n");
         return;
     }
 
@@ -161,14 +194,14 @@ static void cmd_register(client_ctx* ctx, char** tokens, int32_t ntokens)
     nfns.disconnect_fn(&c);
 
     if (res == 0)
-        printf("Registration successful.\n");
+        clio_print("Registration successful.\n");
 }
 
 static void cmd_disconnect(client_ctx* ctx)
 {
     if (ctx->state == ST_DISCONNECTED)
     {
-        printf("Not connected.\n");
+        clio_print("Not connected.\n");
         return;
     }
     epoll_ctl(ctx->epoll_fd, EPOLL_CTL_DEL, ctx->connection.sock_fd, NULL);
@@ -177,14 +210,17 @@ static void cmd_disconnect(client_ctx* ctx)
     ctx->connection.sock_fd = ERROR;
     ctx->recv_len = 0;
     ctx->username[0] = '\0';
-    printf("Disconnected.\n");
+    ctx->server_host[0] = '\0';
+    close_all_transfers(ctx);
+    clio_reset_prompt();
+    clio_print("Disconnected.\n");
 }
 
 static void cmd_msg(client_ctx* ctx, char* orig_line)
 {
     if (ctx->state != ST_CONNECTED)
     {
-        printf("Not connected.\n");
+        clio_print("Not connected.\n");
         return;
     }
 
@@ -195,7 +231,7 @@ static void cmd_msg(client_ctx* ctx, char* orig_line)
     int32_t n = tokenize(tmp, toks, 2);
     if (n < 2)
     {
-        printf("Usage: msg <recipient> <message>\n");
+        clio_print("Usage: msg <recipient> <message>\n");
         return;
     }
 
@@ -206,14 +242,14 @@ static void cmd_msg(client_ctx* ctx, char* orig_line)
     char* msg_text = rest_after_tokens(orig_line, 2);
     if (!*msg_text)
     {
-        printf("Usage: msg <recipient> <message>\n");
+        clio_print("Usage: msg <recipient> <message>\n");
         return;
     }
 
     uint64_t msg_len = strlen(msg_text) + 1;
     if (msg_len > LWMP_PDU_BUF_SIZE)
     {
-        printf("Message too long (max %d bytes).\n", LWMP_PDU_BUF_SIZE - 1);
+        clio_print("Message too long (max %d bytes).\n", LWMP_PDU_BUF_SIZE - 1);
         return;
     }
 
@@ -226,19 +262,19 @@ static void cmd_msg(client_ctx* ctx, char* orig_line)
     pdu.crc32 = htonl(crc32(&pdu, offsetof(lwmp_pdu, crc32)));
 
     if (send_all(&ctx->connection, &ctx->nfns, &pdu, LWMP_HDR_SIZE + msg_len) < 0)
-        fprintf(stderr, "Failed to send message.\n");
+        clio_print("Failed to send message.\n");
 }
 
 static void cmd_sendfile(client_ctx* ctx, char** tokens, int32_t ntokens)
 {
     if (ctx->state != ST_CONNECTED)
     {
-        printf("Not connected.\n");
+        clio_print("Not connected.\n");
         return;
     }
     if (ntokens < 3)
     {
-        printf("Usage: sendfile <recipient> <filepath>\n");
+        clio_print("Usage: sendfile <recipient> <filepath>\n");
         return;
     }
 
@@ -250,7 +286,7 @@ static void cmd_sendfile(client_ctx* ctx, char** tokens, int32_t ntokens)
     FILE* f = fopen(filepath, "rb");
     if (!f)
     {
-        fprintf(stderr, "Cannot open file: %s\n", strerror(errno));
+        clio_print("Cannot open file: %s\n", strerror(errno));
         return;
     }
 
@@ -259,7 +295,7 @@ static void cmd_sendfile(client_ctx* ctx, char** tokens, int32_t ntokens)
     fseek(f, 0, SEEK_SET);
     if (file_size <= 0)
     {
-        printf("File is empty or unreadable.\n");
+        clio_print("File is empty or unreadable.\n");
         fclose(f);
         return;
     }
@@ -269,13 +305,12 @@ static void cmd_sendfile(client_ctx* ctx, char** tokens, int32_t ntokens)
     pdu.msg_type = MT_FILE;
     strncpy(pdu.subject_uname, recipient, UNAMESIZE);
     pdu.total_msg_size = htobe64((uint64_t)file_size);
-
     strncpy(pdu.file_metadata.buf, filepath, OPTDATA_LEN - 1);
 
     uint64_t first_chunk = (uint64_t)file_size < LWMP_PDU_BUF_SIZE ? (uint64_t)file_size : LWMP_PDU_BUF_SIZE;
     if (fread(pdu.buf, 1, first_chunk, f) != first_chunk)
     {
-        fprintf(stderr, "Failed to read file.\n");
+        clio_print("Failed to read file.\n");
         fclose(f);
         return;
     }
@@ -283,44 +318,90 @@ static void cmd_sendfile(client_ctx* ctx, char** tokens, int32_t ntokens)
 
     if (send_all(&ctx->connection, &ctx->nfns, &pdu, LWMP_HDR_SIZE + first_chunk) < 0)
     {
-        fprintf(stderr, "Failed to send file header.\n");
+        clio_print("Failed to send file header.\n");
         fclose(f);
         return;
     }
 
-    uint64_t remaining = (uint64_t)file_size - first_chunk;
-    while (remaining > 0)
+    bool multi = (uint64_t)file_size > LWMP_PDU_BUF_SIZE;
+    if (!multi)
     {
-        unsigned char data[LWMP_CHUNK_BUF_SIZE];
-        uint16_t chunk_sz = remaining < LWMP_CHUNK_BUF_SIZE ? (uint16_t)remaining : LWMP_CHUNK_BUF_SIZE;
-        if (fread(data, 1, chunk_sz, f) != chunk_sz)
-        {
-            fprintf(stderr, "Failed to read file.\n");
-            fclose(f);
-            return;
-        }
-
-        lwmp_chunk chunk = {0};
-        lwmp_prepare_chunk(&chunk, chunk_sz, recipient, data);
-
-        if (send_all(&ctx->connection, &ctx->nfns, &chunk, LWMP_CHUNK_HDR_SIZE + chunk_sz) < 0)
-        {
-            fprintf(stderr, "Failed to send file chunk.\n");
-            fclose(f);
-            return;
-        }
-        remaining -= chunk_sz;
+        fclose(f);
+        clio_print("File %s (%" PRId64 " bytes) sent to %s.\n", filepath, file_size, recipient);
+        return;
     }
 
+    ctx->transfer_error = false;
+    uint32_t resp_code = 0;
+    int32_t ar = await_resp(ctx, &resp_code);
+    if (ar == -2)
+    {
+        fclose(f);
+        return;
+    }
+    if (ar == -1)
+    {
+        clio_print("No response from server; aborting transfer.\n");
+        fclose(f);
+        return;
+    }
+    if (resp_code != RESP_OK)
+    {
+        clio_print("Server rejected the file; aborting transfer.\n");
+        fclose(f);
+        return;
+    }
+
+    ctx->sending_chunks = true;
+    uint64_t remaining = (uint64_t)file_size - first_chunk;
+    bool aborted = false;
+
+    while (remaining > 0)
+    {
+        unsigned char data[LWMP_MAX_PDU_SIZE];
+        uint64_t chunk_sz = remaining < sizeof(data) ? remaining : sizeof(data);
+        if (fread(data, 1, chunk_sz, f) != chunk_sz)
+        {
+            clio_print("Failed to read file.\n");
+            aborted = true;
+            break;
+        }
+
+        if (send_all(&ctx->connection, &ctx->nfns, data, chunk_sz) < 0)
+        {
+            clio_print("Failed to send file data.\n");
+            aborted = true;
+            break;
+        }
+        remaining -= chunk_sz;
+
+        pump_socket_once(ctx);
+        if (ctx->state != ST_CONNECTED || ctx->transfer_error)
+        {
+            aborted = true;
+            break;
+        }
+    }
+
+    ctx->sending_chunks = false;
     fclose(f);
-    printf("File %s (%" PRId64 " bytes) sent to %s.\n", filepath, file_size, recipient);
+
+    if (aborted)
+        clio_print("File transfer to %s aborted.\n", recipient);
+    else
+        clio_print("File %s (%" PRId64 " bytes) sent to %s.\n", filepath, file_size, recipient);
+}
+
+static void cmd_clear(void)
+{
+    clio_print("\x1b[2J\x1b[H");
 }
 
 static void cmd_userlist(client_ctx* ctx)
 {
     if (ctx->state != ST_CONNECTED)
     {
-        printf("Not connected.\n");
+        clio_print("Not connected.\n");
         return;
     }
 
@@ -332,58 +413,72 @@ static void cmd_userlist(client_ctx* ctx)
     pdu.crc32 = htonl(crc32(&pdu, offsetof(lwmp_pdu, crc32)));
 
     if (send_all(&ctx->connection, &ctx->nfns, &pdu, LWMP_HDR_SIZE) < 0)
-        fprintf(stderr, "Failed to send userlist request.\n");
+        clio_print("Failed to send userlist request.\n");
 }
 
-static void cmd_list(void)
+typedef struct help_entry
 {
-    printf("connect, register, disconnect, msg, sendfile, userlist, list, help, quit\n");
+    const char* name;
+    const char* desc;
+    const char* usage;
+} help_entry;
+
+static const help_entry help_table[] = {
+    {"connect",    "Connect and authenticate to a server.",
+                   "connect <host> <port> <username> <password>\n"
+                   "     or: connect defaulthost <username> <password>"},
+    {"register",   "Register a new account on a server.",
+                   "register <host> <port> <username> <password>\n"
+                   "     or: register defaulthost <username> <password>"},
+    {"disconnect", "Disconnect from the current server.",
+                   "disconnect"},
+    {"msg",        "Send a text message to a user.",
+                   "msg <recipient> <message>"},
+    {"sendfile",   "Send a file to a user.",
+                   "sendfile <recipient> <filepath>"},
+    {"userlist",   "List all online users.",
+                   "userlist"},
+    {"clear",      "Clears the screen.",
+                   "clear"},
+    {"help",       "Displays all available commands and their usage.",
+                   "help [command]"},
+    {"quit",       "Exit the client.",
+                   "quit  (or q)"}
+};
+
+static void print_help_entry(const help_entry* e)
+{
+    clio_print("%s - %s\n", e->name, e->desc);
+    clio_print("  Usage: %s\n", e->usage);
 }
 
 static void cmd_help(char** tokens, int32_t ntokens)
 {
+    size_t count = sizeof(help_table) / sizeof(help_table[0]);
+
     if (ntokens < 2)
     {
-        printf("Use 'list' to see available commands.\n"
-               "Use 'help <command>' for details on a specific command.\n");
+        for (size_t i = 0; i < count; i++)
+            print_help_entry(&help_table[i]);
         return;
     }
 
     const char* cmd = tokens[1];
-    if (strcmp(cmd, "connect") == 0)
-        printf("Connect and authenticate to a server.\n"
-               "Usage: connect <host> <port> <username> <password>\n");
-    else if (strcmp(cmd, "register") == 0)
-        printf("Register a new account on a server.\n"
-               "Usage: register <host> <port> <username> <password>\n");
-    else if (strcmp(cmd, "disconnect") == 0)
-        printf("Disconnect from the current server.\n"
-               "Usage: disconnect\n");
-    else if (strcmp(cmd, "msg") == 0)
-        printf("Send a text message to a user.\n"
-               "Usage: msg <recipient> <message>\n");
-    else if (strcmp(cmd, "sendfile") == 0)
-        printf("Send a file to a user.\n"
-               "Usage: sendfile <recipient> <filepath>\n");
-    else if (strcmp(cmd, "userlist") == 0)
-        printf("List all online users.\n"
-               "Usage: userlist\n");
-    else if (strcmp(cmd, "list") == 0)
-        printf("List all available commands.\n"
-               "Usage: list\n");
-    else if (strcmp(cmd, "help") == 0)
-        printf("Show help for a command.\n"
-               "Usage: help <command>\n");
-    else if (strcmp(cmd, "quit") == 0 || strcmp(cmd, "q") == 0)
-        printf("Exit the client.\n"
-               "Usage: quit\n");
-    else
-        printf("Unknown command: %s\n", cmd);
+    if (strcmp(cmd, "q") == 0) cmd = "quit";
+    for (size_t i = 0; i < count; i++)
+    {
+        if (strcmp(cmd, help_table[i].name) == 0)
+        {
+            print_help_entry(&help_table[i]);
+            return;
+        }
+    }
+    clio_print("Unknown command: %s\n", cmd);
 }
 
-static void dispatch_line(client_ctx* ctx, char* line)
+void handle_command_line(client_ctx* ctx, char* line)
 {
-    if (!line[0]) { printf("> "); fflush(stdout); return; }
+    if (!line[0]) return;
 
     char line_copy[INPUT_LINE_MAX];
     strncpy(line_copy, line, INPUT_LINE_MAX - 1);
@@ -391,7 +486,7 @@ static void dispatch_line(client_ctx* ctx, char* line)
 
     char* tokens[MAX_TOKENS];
     int32_t ntokens = tokenize(line, tokens, MAX_TOKENS);
-    if (ntokens == 0) { printf("> "); fflush(stdout); return; }
+    if (ntokens == 0) return;
 
     if (strcmp(tokens[0], "connect") == 0)
         cmd_connect(ctx, tokens, ntokens);
@@ -407,44 +502,10 @@ static void dispatch_line(client_ctx* ctx, char* line)
         cmd_sendfile(ctx, tokens, ntokens);
     else if (strcmp(tokens[0], "userlist") == 0)
         cmd_userlist(ctx);
-    else if (strcmp(tokens[0], "list") == 0)
-        cmd_list();
+    else if (strcmp(tokens[0], "clear") == 0)
+        cmd_clear();
     else if (strcmp(tokens[0], "help") == 0)
         cmd_help(tokens, ntokens);
     else
-        printf("Unknown command: %s. Type 'help' for commands.\n", tokens[0]);
-
-    if (ctx->running) { printf("> "); fflush(stdout); }
-}
-
-void handle_stdin(client_ctx* ctx)
-{
-    int64_t n = read(STDIN_FILENO, ctx->stdin_buf + ctx->stdin_len,
-                     INPUT_LINE_MAX - 1 - ctx->stdin_len);
-    if (n <= 0)
-    {
-        ctx->running = false;
-        return;
-    }
-
-    ctx->stdin_len += n;
-
-    char* nl;
-    while ((nl = memchr(ctx->stdin_buf, '\n', ctx->stdin_len)) != NULL)
-    {
-        *nl = '\0';
-        dispatch_line(ctx, ctx->stdin_buf);
-
-        uint32_t consumed = (uint32_t)(nl - ctx->stdin_buf) + 1;
-        ctx->stdin_len -= consumed;
-        if (ctx->stdin_len > 0)
-            memmove(ctx->stdin_buf, nl + 1, ctx->stdin_len);
-    }
-
-    if (ctx->stdin_len >= INPUT_LINE_MAX - 1)
-    {
-        ctx->stdin_buf[INPUT_LINE_MAX - 1] = '\0';
-        dispatch_line(ctx, ctx->stdin_buf);
-        ctx->stdin_len = 0;
-    }
+        clio_print("Unknown command: %s. Type 'help' for commands.\n", tokens[0]);
 }

@@ -41,6 +41,8 @@ mpsc_msg_node* mpscq_dequeue(mpsc_msg_queue* mpscq);
 
 void mpscq_destroy(mpsc_msg_queue* mpscq);
 
+void mpscq_flush_msgs_with_subject(mpsc_msg_queue* mpscq, char* subject);
+
 int32_t mpscq_get_efd(mpsc_msg_queue* mpscq);
 
 mpsc_msg_node* msg_node_create(void* buf, uint64_t buf_size, char* subject_name);

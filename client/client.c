@@ -3,9 +3,9 @@
 //
 
 #include "client.h"
-#include "clcmd.h"
 #include "clrecv.h"
 #include "clnet.h"
+#include "clio.h"
 
 #include <stdio.h>
 #include <unistd.h>
@@ -68,8 +68,7 @@ int main(int argc, char** argv)
     epoll_ctl(ctx.epoll_fd, EPOLL_CTL_ADD, STDIN_FILENO, &ev_stdin);
 
     printf("lwmsg client%s. Type 'help' for commands.\n", ctx.use_tls ? " (TLS)" : "");
-    printf("> ");
-    fflush(stdout);
+    clio_init(&ctx);
 
     struct epoll_event events[4];
     while (ctx.running)
@@ -84,12 +83,15 @@ int main(int argc, char** argv)
         for (int32_t i = 0; i < nev; i++)
         {
             if (events[i].data.fd == STDIN_FILENO)
-                handle_stdin(&ctx);
+                clio_on_stdin();
             else
                 handle_socket_data(&ctx);
         }
     }
 
+    clio_shutdown();
+
+    close_all_transfers(&ctx);
     if (ctx.state == ST_CONNECTED)
     {
         epoll_ctl(ctx.epoll_fd, EPOLL_CTL_DEL, ctx.connection.sock_fd, NULL);
@@ -98,6 +100,6 @@ int main(int argc, char** argv)
     close(ctx.epoll_fd);
     if (ctx.ssl_ctx) SSL_CTX_free(ctx.ssl_ctx);
 
-    printf("\nExiting.\n");
+    printf("Exiting.\n");
     return 0;
 }

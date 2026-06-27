@@ -27,6 +27,8 @@ bool reg_ctx_init(reg_thrd_ctx** reg_ctx, SSL_CTX* ssl_ctx, striped_htable* ip_w
         dbc = NULL;
         init_ok = false;
     }
+    else
+        sqlite3_busy_timeout(dbc, 2000);
     striped_htable *reg_ipbtable = htable_create(IPBL_TBL_SIZE_POW2, IPBL_TBL_RESIZE_POW2,
                                                  IPBL_TBL_THRES_LDFAC, IPBL_TBL_BKT_PER_LOCK_POW2, ip_cmp);
 
@@ -105,6 +107,7 @@ uint8_t worker_ctx_init(worker_thrd_ctx** w_ctx, uint8_t n, SSL_CTX* ssl_ctx, st
             }
             break;
         }
+        sqlite3_busy_timeout(wt_ctx[i].db_rdonly_handle, 2000);
 
         wt_ctx[i].flg_shutdown = shutdown_efd;
         wt_ctx[i].std_ipblock_tbl = std_ipblock_tbl;

@@ -115,6 +115,8 @@ int64_t send_tcp(conn* c, void* buf, uint64_t len)
             default: return ERROR;
         }
     }
+    else if (!written)
+        return ERROR;
 
     return written;
 }
@@ -132,6 +134,8 @@ int64_t recv_tcp(conn* c, void* buf, uint64_t len)
             default: return ERROR;
         }
     }
+    else if (!received)
+        return ERROR;
 
     return received;
 }

@@ -58,8 +58,8 @@ void mpscq_enqueue(mpsc_msg_queue* mpscq, mpsc_msg_node* msg)
 
     if (mpscq->qmode == MODE_MPSC)
     {
-        pthread_mutex_unlock(&mpscq->lock);
         eventfd_write(mpscq->eventfd, 1);
+        pthread_mutex_unlock(&mpscq->lock);
     }
 }
 
@@ -123,6 +123,52 @@ void mpscq_destroy(mpsc_msg_queue* mpscq)
         pthread_mutex_unlock(&mpscq->lock);
         pthread_mutex_destroy(&mpscq->lock);
     }
+}
+
+void mpscq_flush_msgs_with_subject(mpsc_msg_queue* mpscq, char* subject)
+{
+    if (mpscq->qmode == MODE_SPSC)
+        return;
+
+    pthread_mutex_lock(&mpscq->lock);
+    mpsc_msg_node* mnode = mpscq->head.next;
+    mpsc_msg_node* temp = NULL;
+    while (mnode)
+    {
+        int32_t cmpres = strncmp(mnode->subject_name, subject, UNAMESIZE);
+        if (cmpres)
+        {
+            mnode = mnode->next;
+            continue;
+        }
+
+        if (mpscq->tail == mnode)
+            mpscq->tail = mnode->prev;
+
+        if (mnode->prev)
+        {
+            mnode->prev->next = mnode->next;
+        }
+        else
+        {
+            mpscq->head.next = mnode->next;
+        }
+
+        if (mnode->next)
+        {
+            mnode->next->prev = mnode->prev;
+        }
+
+        temp = mnode;
+        mnode = mnode->next;
+        temp->next = NULL;
+        temp->prev = NULL;
+        free(temp->buf);
+        free(temp);
+        eventfd_t efdval;
+        eventfd_read(mpscq->eventfd, &efdval);
+    }
+    pthread_mutex_unlock(&mpscq->lock);
 }
 
 int32_t mpscq_get_efd(mpsc_msg_queue* mpscq)

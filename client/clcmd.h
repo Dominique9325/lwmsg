@@ -9,6 +9,6 @@ int32_t tokenize(char* line, char** tokens, int32_t max_tokens);
 
 char* rest_after_tokens(char* line, int32_t skip);
 
-void handle_stdin(client_ctx* ctx);
+void handle_command_line(client_ctx* ctx, char* line);
 
 #endif

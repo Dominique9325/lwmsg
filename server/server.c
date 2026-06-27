@@ -107,7 +107,9 @@ int main(int argc, char** argv)
     }
 
 
-
+    // sleep(60);
+    // dzlog_fatal("Randomly shutting down server for no reason.");
+    // eventfd_write(shutdown_efd, 1);
     //__atomic_store_n(&g_server_cfg->allow_regisrations, false, __ATOMIC_SEQ_CST);
     //eventfd_write(shutdown_efd, 1);
     // sleep(5);
