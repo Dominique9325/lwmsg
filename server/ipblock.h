@@ -11,7 +11,7 @@
 
 #define REGBLOCK_FAIL_THRES 5 // 5
 #define REGBLOCK_SUCC_THRES 1 // 1
-#define AUTHBLOCK_FAIL_THRES 5
+#define AUTHBLOCK_FAIL_THRES 5 // 5
 
 #define REGBLOCK_EXPIRY 7200 // 2 h
 #define AUTHBLOCK_EXPIRY 3600 // 1 h
@@ -41,7 +41,7 @@ typedef struct reg_ipb_rec
     struct timespec timestamp;
     in_addr_t ip_addr;
     uint8_t succ_regs;
-    uint8_t failed_regs;
+    uint8_t* failed_regs;
     const bool is_manual;
 }reg_ipb_rec;
 

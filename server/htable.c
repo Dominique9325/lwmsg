@@ -19,20 +19,20 @@
 
 struct striped_htable
 {
-    node **buckets;
+    node** buckets;
     const cmp_func cmpfn;
     uint64_t bucket_count;
     ATOMIC uint64_t element_count;
     ATOMIC uint64_t resize_thres_elem_count;
     pthread_rwlock_t g_resize_lock;
-    pthread_rwlock_t *locks;
+    pthread_rwlock_t* locks;
     uint64_t lock_count; // doesn't need to be atomic.
     const uint8_t buckets_per_lock_pow2;
     const uint8_t threshold_load_factor;
     const uint8_t htable_pow2_resize_factor;
 };
 
-static uint32_t fnv1a_32_hash(const unsigned char *input, uint32_t size)
+static uint32_t fnv1a_32_hash(const unsigned char* input, uint32_t size)
 {
     assert(input && size);
     uint32_t hash = FNV1A_32_OFFSET_BASIS;
@@ -45,7 +45,7 @@ static uint32_t fnv1a_32_hash(const unsigned char *input, uint32_t size)
 }
 
 
-striped_htable *htable_create(uint8_t htable_pow2_size_factor, uint8_t htable_pow2_resize_factor,
+striped_htable* htable_create(uint8_t htable_pow2_size_factor, uint8_t htable_pow2_resize_factor,
                               uint8_t thres_load_factor,
                               uint8_t buckets_per_lock_pow2, cmp_func cmpfn
 )
@@ -113,7 +113,7 @@ fail:
 }
 
 
-static void htable_resize(striped_htable *htable)
+static void htable_resize(striped_htable* htable)
 {
     assert(htable && htable->buckets && htable->locks);
 
@@ -272,7 +272,7 @@ bucket_resize_fail:
 }
 
 
-bool htable_add(striped_htable *htable, node *element)
+bool htable_add(striped_htable* htable, node* element)
 {
     assert(htable && htable->buckets && htable->locks && element);
 
@@ -363,14 +363,14 @@ bool htable_add(striped_htable *htable, node *element)
 }
 
 
-void htable_remove(striped_htable *htable, const void *key, uint32_t key_size)
+void htable_remove(striped_htable* htable, const void* key, uint32_t key_size)
 {
     assert(htable && htable->buckets && htable->locks && key && key_size);
 
     if (pthread_rwlock_rdlock(&htable->g_resize_lock))
         return;
 
-    uint64_t index = fnv1a_32_hash((const unsigned char *) key, key_size) & (htable->bucket_count - 1);
+    uint64_t index = fnv1a_32_hash((const unsigned char*) key, key_size) & (htable->bucket_count - 1);
     uint64_t lock_index = index >> htable->buckets_per_lock_pow2;
 
     if (pthread_rwlock_wrlock(&htable->locks[lock_index]))
@@ -414,7 +414,7 @@ exit:
 }
 
 
-node *htable_get(striped_htable *htable, const void *key, uint32_t len, bool ref_inc)
+node* htable_get(striped_htable *htable, const void *key, uint32_t len, bool ref_inc)
 {
     assert(htable && htable->buckets && htable->locks && key && len);
 
@@ -428,8 +428,6 @@ node *htable_get(striped_htable *htable, const void *key, uint32_t len, bool ref
 
     uint64_t index = fnv1a_32_hash((const unsigned char *) key, len) & (htable->bucket_count - 1);
     uint64_t lock_index = index >> htable->buckets_per_lock_pow2;
-    node *seeker = htable->buckets[index];
-    node *target = NULL;
     cmp_func cmpfn = htable->cmpfn;
     int32_t cmp_res = 1;
 
@@ -438,6 +436,9 @@ node *htable_get(striped_htable *htable, const void *key, uint32_t len, bool ref
         pthread_rwlock_unlock(&htable->g_resize_lock);
         return NULL;
     }
+
+    node *seeker = htable->buckets[index];
+    node *target = NULL;
 
     while (seeker)
     {
@@ -538,7 +539,7 @@ void node_put(node *n)
 }
 
 
-void htable_delete(striped_htable *htable)
+void htable_delete(striped_htable* htable)
 {
     assert(htable);
 

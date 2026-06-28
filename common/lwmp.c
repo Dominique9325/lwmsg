@@ -176,7 +176,7 @@ void lwmp_prepare_response(lwmp_pdu* pdu, uint8_t msg_type, void* optdata, uint8
         return;
     }
 
-
+    memset(pdu->subject_uname, 0, UNAMESIZE);
     pdu->msg_type = msg_type;
     pdu->hdr_mark = htonl(PDU_SYNC_HDR_MARK);
     if (optdata)

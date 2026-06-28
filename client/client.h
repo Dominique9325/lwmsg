@@ -9,7 +9,7 @@
 
 #define INPUT_LINE_MAX 4096
 #define RECV_BUF_SIZE (LWMP_MAX_PDU_SIZE * 4)
-#define USER_CACHE_MAX 256
+#define USER_CACHE_MAX 25600
 #define AWAIT_RESP_TIMEOUT_MS 10000
 
 enum client_state

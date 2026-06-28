@@ -45,6 +45,8 @@ add_executable(lwmsg-server server/server.c
         common/misc.h
         common/lwmp.c
         common/lwmp.h
+        common/cmdparse.c
+        common/cmdparse.h
         server/registration.c
         server/registration.h
         server/cltimerheap.c
@@ -75,6 +77,8 @@ add_executable(lwmsg-client client/client.c
         common/netwrap.h
         common/lwmp.c
         common/lwmp.h
+        common/cmdparse.c
+        common/cmdparse.h
         common/xalloc.c
         common/xalloc.h
         common/util.c

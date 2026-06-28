@@ -175,11 +175,13 @@ int32_t accept_tls(conn* c, SSL_CTX* ssl_ctx)
     if (res != 1)
     {
         int32_t err = SSL_get_error(c->ssl, res);
-        dzlog_info("SSL error: %d", err);
         switch (err)
         {
             case SSL_ERROR_ZERO_RETURN:
-            case SSL_ERROR_SYSCALL: return ERROR;
+            case SSL_ERROR_SYSCALL:
+                dzlog_info("SSL error: %d", err);
+                return ERROR;
+
             case SSL_ERROR_WANT_READ:
             case SSL_ERROR_WANT_WRITE: return ACCPT_IN_PROGRESS;
             default: return ERROR;

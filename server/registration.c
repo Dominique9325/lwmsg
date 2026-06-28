@@ -16,7 +16,7 @@
 #include "thrdctx.h"
 #include "clhandle.h"
 #include "cltimerheap.h"
-#include "../common/misc.h"
+#include "misc.h"
 #include "xalloc.h"
 #include "ipblock.h"
 #include "dbops.h"
@@ -179,7 +179,7 @@ static void handle_new_connections(reg_client_list* list, cl_timerheap* clth, re
         int32_t cres = nfn->accept_fn(&cl.connection, rt_ctx->ssl_ctx);
         if (cres == ERROR)
         {
-            close(clsock);
+            nfn->disconnect_fn(&cl.connection);
             continue;
         }
 

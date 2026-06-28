@@ -20,54 +20,6 @@
 #define DEFAULT_PORT_CONNECT 7228
 #define DEFAULT_PORT_REGISTER 6671
 
-int32_t tokenize(char* line, char** tokens, int32_t max_tokens)
-{
-    int32_t n = 0;
-    char* p = line;
-    while (*p && n < max_tokens)
-    {
-        while (*p == ' ' || *p == '\t') p++;
-        if (!*p) break;
-
-        if (*p == '"')
-        {
-            p++;
-            tokens[n++] = p;
-            while (*p && *p != '"') p++;
-            if (*p == '"') *p++ = '\0';
-        }
-        else
-        {
-            tokens[n++] = p;
-            while (*p && *p != ' ' && *p != '\t') p++;
-            if (*p) *p++ = '\0';
-        }
-    }
-    return n;
-}
-
-char* rest_after_tokens(char* line, int32_t skip)
-{
-    char* p = line;
-    for (int32_t i = 0; i < skip; i++)
-    {
-        while (*p == ' ' || *p == '\t') p++;
-        if (!*p) return p;
-        if (*p == '"')
-        {
-            p++;
-            while (*p && *p != '"') p++;
-            if (*p == '"') p++;
-        }
-        else
-        {
-            while (*p && *p != ' ' && *p != '\t') p++;
-        }
-    }
-    while (*p == ' ' || *p == '\t') p++;
-    return p;
-}
-
 static bool parse_target(char** tokens, int32_t ntokens, uint16_t default_port, const char** host,
                          uint16_t* port, const char** username, const char** password)
 {
@@ -228,7 +180,7 @@ static void cmd_msg(client_ctx* ctx, char* orig_line)
     strncpy(tmp, orig_line, INPUT_LINE_MAX - 1);
     tmp[INPUT_LINE_MAX - 1] = '\0';
     char* toks[2];
-    int32_t n = tokenize(tmp, toks, 2);
+    int32_t n = cmdparse_tokenize(tmp, toks, 2);
     if (n < 2)
     {
         clio_print("Usage: msg <recipient> <message>\n");
@@ -239,7 +191,7 @@ static void cmd_msg(client_ctx* ctx, char* orig_line)
     strncpy(recipient, toks[1], UNAMESIZE - 1);
     normalize_string(recipient);
 
-    char* msg_text = rest_after_tokens(orig_line, 2);
+    char* msg_text = cmdparse_rest_after_tokens(orig_line, 2);
     if (!*msg_text)
     {
         clio_print("Usage: msg <recipient> <message>\n");
@@ -484,8 +436,8 @@ void handle_command_line(client_ctx* ctx, char* line)
     strncpy(line_copy, line, INPUT_LINE_MAX - 1);
     line_copy[INPUT_LINE_MAX - 1] = '\0';
 
-    char* tokens[MAX_TOKENS];
-    int32_t ntokens = tokenize(line, tokens, MAX_TOKENS);
+    char* tokens[CMDPARSE_MAX_TOKENS];
+    int32_t ntokens = cmdparse_tokenize(line, tokens, CMDPARSE_MAX_TOKENS);
     if (ntokens == 0) return;
 
     if (strcmp(tokens[0], "connect") == 0)

@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #include <errno.h>
 #include <poll.h>
 #include <sys/epoll.h>
@@ -20,6 +21,36 @@ static const char* sanitize_filename(const char* raw)
     if (!base[0] || strcmp(base, ".") == 0 || strcmp(base, "..") == 0)
         return "received_file";
     return base;
+}
+
+#define MAX_DEDUP_ATTEMPTS 10000
+
+static void make_unique_filename(const char* desired, char* out, size_t out_cap)
+{
+    const char* dot = strrchr(desired, '.');
+    const char* ext = (dot && dot != desired) ? dot : "";
+    size_t stem_len = (dot && dot != desired) ? (size_t)(dot - desired) : strlen(desired);
+    size_t ext_len = strlen(ext);
+
+    snprintf(out, out_cap, "%s", desired);
+    if (access(out, F_OK) != 0)
+        return;
+
+    size_t maxlen = OPTDATA_LEN;
+    if (maxlen > out_cap - 1)
+        maxlen = out_cap - 1;
+
+    for (uint32_t n = 1; n <= MAX_DEDUP_ATTEMPTS; n++)
+    {
+        char suffix[16];
+        int slen = snprintf(suffix, sizeof(suffix), "(%u)", n);
+        size_t fixed = ext_len + (size_t)slen;
+        size_t avail_stem = (maxlen > fixed) ? maxlen - fixed : 0;
+        size_t use_stem = stem_len < avail_stem ? stem_len : avail_stem;
+        snprintf(out, out_cap, "%.*s%s%s", (int)use_stem, desired, suffix, ext);
+        if (access(out, F_OK) != 0)
+            return;
+    }
 }
 
 static file_transfer* find_transfer(client_ctx* ctx, const char* sender)
@@ -166,10 +197,13 @@ static void process_received_pdu(client_ctx* ctx, lwmp_pdu* pdu, uint64_t payloa
                 break;
             }
 
-            FILE* fp = fopen(filename, "wb");
+            char destname[OPTDATA_LEN + 1];
+            make_unique_filename(filename, destname, sizeof(destname));
+
+            FILE* fp = fopen(destname, "wb");
             if (!fp)
             {
-                clio_print("Failed to create file: %s\n", filename);
+                clio_print("Failed to create file: %s\n", destname);
                 break;
             }
 
@@ -179,7 +213,7 @@ static void process_received_pdu(client_ctx* ctx, lwmp_pdu* pdu, uint64_t payloa
             if (payload_size >= file_size)
             {
                 fclose(fp);
-                clio_print("[%s] received file %s (%" PRIu64 " bytes)\n", sender, filename, file_size);
+                clio_print("[%s] received file %s (%" PRIu64 " bytes)\n", sender, destname, file_size);
             }
             else
             {
@@ -188,8 +222,8 @@ static void process_received_pdu(client_ctx* ctx, lwmp_pdu* pdu, uint64_t payloa
                 ft->expected_size = file_size;
                 ft->received = payload_size;
                 strncpy(ft->sender, sender, UNAMESIZE);
-                strncpy(ft->filename, filename, OPTDATA_LEN);
-                clio_print("[%s] receiving file %s (%" PRIu64 " bytes)...\n", sender, filename, file_size);
+                snprintf(ft->filename, sizeof(ft->filename), "%s", destname);
+                clio_print("[%s] receiving file %s (%" PRIu64 " bytes)...\n", sender, destname, file_size);
             }
             break;
         }

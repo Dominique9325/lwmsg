@@ -87,8 +87,8 @@ int main(int argc, char** argv)
         goto wrk_thrd_ctx_init_fail;
     }
 
-    whitelist_rec* wr = whitelist_rec_create(inet_addr("127.0.0.1"));
-    htable_add(whitelist, &wr->nd);
+    //whitelist_rec* wr = whitelist_rec_create(inet_addr("127.0.0.1"));
+    //htable_add(whitelist, &wr->nd);
 
     pthread_t reg_thrd;
     int32_t tr_lnch_res = pthread_create(&reg_thrd, NULL, reg_thrd_routine, rt_ctx);
@@ -106,10 +106,10 @@ int main(int argc, char** argv)
         goto thrd_startup_failed;
     }
 
-
-    // sleep(60);
-    // dzlog_fatal("Randomly shutting down server for no reason.");
-    // eventfd_write(shutdown_efd, 1);
+    //g_server_cfg->use_ip_whitelist = true;
+    sleep(14400);
+    dzlog_fatal("Randomly shutting down server for no reason.");
+    eventfd_write(shutdown_efd, 1);
     //__atomic_store_n(&g_server_cfg->allow_regisrations, false, __ATOMIC_SEQ_CST);
     //eventfd_write(shutdown_efd, 1);
     // sleep(5);
