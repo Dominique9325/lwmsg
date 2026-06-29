@@ -60,7 +60,7 @@ typedef struct serv_cfg
 #define X_FIELDS(mtype, mname, mmin, mmax, mdef) mtype mname;
     CFG_FIELDS(X_FIELDS)
 #undef X_FIELDS
-    char padding[4];
+    char padding[7];
 }serv_cfg;
 
 extern serv_cfg* g_server_cfg;

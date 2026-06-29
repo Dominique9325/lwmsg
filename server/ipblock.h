@@ -9,9 +9,9 @@
 #include <time.h>
 #include "htable.h"
 
-#define REGBLOCK_FAIL_THRES 500000 // 5
-#define REGBLOCK_SUCC_THRES 100000 // 1
-#define AUTHBLOCK_FAIL_THRES 500000 // 5
+#define REGBLOCK_FAIL_THRES 5 // 5
+#define REGBLOCK_SUCC_THRES 1 // 1
+#define AUTHBLOCK_FAIL_THRES 5 // 5
 
 #define REGBLOCK_EXPIRY 7200 // 2 h
 #define AUTHBLOCK_EXPIRY 3600 // 1 h
@@ -46,8 +46,8 @@ typedef struct reg_ipb_rec
     in_addr_t ip_addr;
     node nd;
     struct timespec timestamp;
-    uint32_t succ_regs;
-    uint32_t failed_regs;
+    uint8_t succ_regs;
+    uint8_t failed_regs;
     const bool is_manual;
 }reg_ipb_rec;
 
@@ -56,7 +56,7 @@ typedef struct std_ipb_rec
     in_addr_t ip_addr;
     node nd;
     struct timespec timestamp;
-    ATOMIC uint32_t failed_auths;
+    ATOMIC uint8_t failed_auths;
     const bool is_manual;
 }std_ipb_rec;
 
