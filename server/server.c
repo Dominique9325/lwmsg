@@ -16,6 +16,7 @@
 #include "thrdctx.h"
 #include "netwrap.h"
 #include "registration.h"
+#include "servctrl.h"
 #include "worker.h"
 #include "xalloc.h"
 
@@ -87,9 +88,6 @@ int main(int argc, char** argv)
         goto wrk_thrd_ctx_init_fail;
     }
 
-    //whitelist_rec* wr = whitelist_rec_create(inet_addr("127.0.0.1"));
-    //htable_add(whitelist, &wr->nd);
-
     pthread_t reg_thrd;
     int32_t tr_lnch_res = pthread_create(&reg_thrd, NULL, reg_thrd_routine, rt_ctx);
     pthread_t* wrk_thrds = (pthread_t*)xmalloc(num_worker_threads * sizeof(pthread_t));
@@ -106,15 +104,45 @@ int main(int argc, char** argv)
         goto thrd_startup_failed;
     }
 
-    //g_server_cfg->use_ip_whitelist = true;
-    sleep(14400);
-    dzlog_fatal("Randomly shutting down server for no reason.");
-    eventfd_write(shutdown_efd, 1);
-    //__atomic_store_n(&g_server_cfg->allow_regisrations, false, __ATOMIC_SEQ_CST);
-    //eventfd_write(shutdown_efd, 1);
-    // sleep(5);
-    // //__atomic_store_n(&g_server_cfg->allow_regisrations, true, __ATOMIC_SEQ_CST);
-    // write(rt_ctx->flg_reg_changed, &evvv, sizeof(eventfd_t));
+    FILE* lwmsgctrl_if = open_ctrl_if();
+    if (lwmsgctrl_if)
+    {
+        char input_line[1024];
+        char** tokens = (char**)xmalloc(MAX_TOKENS_PER_LINE * sizeof(char*));
+        ctrl_ctx ctrlctx = {
+            .std_ipblock_tbl = std_ipblock_tbl,
+            .ip_whitelist_tbl = whitelist,
+            .reg_ipblock_tbl = rt_ctx->reg_ipblock_tbl,
+            .std_cl_tbl = client_tbl,
+            .flg_reg_changed = rt_ctx->flg_reg_changed,
+            .flg_shutdown = shutdown_efd,
+            .zct = zct
+        };
+
+        while (true)
+        {
+            int32_t token_cnt = ctrl_parse_input(lwmsgctrl_if, input_line, tokens);
+            if (token_cnt < 0)
+            {
+                dzlog_fatal("Control interface read failure. Shutting down.");
+                eventfd_write(shutdown_efd, 1);
+                break;
+            }
+            bool should_continue = ctrl_process_cmd(&ctrlctx, tokens, token_cnt);
+            if (!should_continue)
+                break;
+        }
+
+        close_ctrl_if(lwmsgctrl_if);
+        free(tokens);
+    }
+    else
+    {
+        dzlog_fatal("Failed to open control interface. Shutting down.");
+        eventfd_write(shutdown_efd, 1);
+    }
+
+
     prog_retval = 0;
 
     thrd_startup_failed:

@@ -193,7 +193,9 @@ static void manage_reg_ipbr(reg_thrd_ctx* rt_ctx, reg_client_node* pcln, uint8_t
     if (!ripbr_node)
     {
         reg_ipb_rec* ripbr = reg_ipb_rec_create(pcln->cl.peer_name, ripb_reason);
-        htable_add(rt_ctx->reg_ipblock_tbl, &ripbr->nd);
+        bool res = htable_add(rt_ctx->reg_ipblock_tbl, &ripbr->nd);
+        if (!res)
+            node_put(&ripbr->nd);
         dzlog_debug("RIPB_REASON = %hhu", ripb_reason);
     }
     else

@@ -54,11 +54,9 @@ static void cleanup_std_client(stdcl_containers* cont, node* client_node, int32_
         case ACCEPTING:
             intrusive_list_remove(cont->preauth_list, client_node);
             epoll_ctl(epollfd, EPOLL_CTL_DEL, stdc->cl.connection.sock_fd, NULL);
-            nfn->disconnect_fn(&stdc->cl.connection);
 
         case INIT:
-            if (stdc->cl.connection.sock_fd != ERROR)
-                close(stdc->cl.connection.sock_fd);
+            nfn->disconnect_fn(&stdc->cl.connection);
             free(stdc->cl.temp_recv_storage.recvbuf.buf);
             free(stdc);
             break;
@@ -72,7 +70,6 @@ static void wt_handle_shutdown(stdcl_containers* cont, sqlite3_stmt* stmt, int32
     sqlite3_finalize(stmt);
     epoll_ctl(epollfd, EPOLL_CTL_DEL, listenerfd, NULL);
     close(listenerfd);
-    free(cont->clth->clients);
     dummy_node* list = cont->preauth_list->next;
     node* temp = NULL;
 
@@ -83,6 +80,7 @@ static void wt_handle_shutdown(stdcl_containers* cont, sqlite3_stmt* stmt, int32
         cleanup_std_client(cont, temp, epollfd);
     }
 
+    free(cont->clth->clients);
     free(cont->preauth_list);
     node_arr_sweep(cont->std_cl_table, cont->dconn_clients);
     free(cont->dconn_clients->nodes);

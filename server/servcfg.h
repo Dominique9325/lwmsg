@@ -27,7 +27,6 @@ typedef char ipv4addrstr[INET_ADDRSTRLEN];
 
 #define CFG_INT_FIELDS(X) \
 X(ATOMIC uint64_t,         max_filesize_b,                  200,              UINT64_MAX,  1U << 22) \
-X(ATOMIC uint16_t,         pop_cap,                         0,                UINT16_MAX,  20      ) \
 X(uint16_t,                reg_port,                        6500,             7000,        6671    ) \
 X(uint16_t,                gen_port,                        7001,             UINT16_MAX,  7228    ) \
 X(uint16_t,                ctrl_port,                       MIN_NONPRIV_PORT, UINT16_MAX,  6777    ) \

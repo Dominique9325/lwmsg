@@ -10,7 +10,6 @@
 #define ERROR (-1)
 #define ACCPT_DONE 0
 #define ACCPT_IN_PROGRESS 1
-
 #define EBLOCK (-2)
 
 typedef struct conn

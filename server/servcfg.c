@@ -76,6 +76,12 @@ void load_cfg(const char* cfg_file)
 #undef X_LD_INT
 #undef X_LD_STR
 
+    if (temp_cfg.cl_htable_locks_pow2 > temp_cfg.cl_htable_size_pow2)
+    {
+        printf("cl_htable_locks_pow2 must not be greater than cl_htable_size_pow2, reducing it to the value of the latter.\n");
+        temp_cfg.cl_htable_locks_pow2 = temp_cfg.cl_htable_size_pow2;
+    }
+
     json_object_put(cfg_json);
     memcpy(g_server_cfg, &temp_cfg, sizeof(serv_cfg));
 }

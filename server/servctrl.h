@@ -5,26 +5,30 @@
 #ifndef LWMSG_SERVCTRL_H
 #define LWMSG_SERVCTRL_H
 #include <stdint.h>
-#define HDR_MARK 0x18C04DF2U
-#define VARARG (-1)
+#include <stdio.h>
+#include "servcfg.h"
+#include "htable.h"
+#include "zlog.h"
+#define MAX_TOKENS_PER_LINE 20
 
-typedef struct command
+
+typedef struct ctrl_ctx
 {
-    uint8_t cmd_code;
-    char cmd_name[32];
-    int8_t cmd_argc;
-    uint8_t local;
-}command;
+    striped_htable* std_cl_tbl;
+    striped_htable* std_ipblock_tbl;
+    striped_htable* reg_ipblock_tbl;
+    striped_htable* ip_whitelist_tbl;
+    zlog_category_t* zct;
+    int32_t flg_reg_changed;
+    int32_t flg_shutdown;
+}ctrl_ctx;
 
-extern command commands[];
-extern uint8_t command_count;
-extern char cmd_manuals[][256];
+FILE* open_ctrl_if();
 
-typedef struct serv_cmd
-{
-    uint8_t cmd_code;
-}serv_cmd;
+void close_ctrl_if(FILE* cifp);
 
-int32_t ctrl_read_cmd(int32_t sockfd, void* buf, int32_t bufsize);
+int32_t ctrl_parse_input(FILE* cifp, char line[1024], char** tokens);
+
+bool ctrl_process_cmd(ctrl_ctx* ctrlctx, char** tokens, int32_t num_tokens);
 
 #endif //LWMSG_SERVCTRL_H

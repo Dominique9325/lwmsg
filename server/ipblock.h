@@ -9,9 +9,9 @@
 #include <time.h>
 #include "htable.h"
 
-#define REGBLOCK_FAIL_THRES 5 // 5
-#define REGBLOCK_SUCC_THRES 1 // 1
-#define AUTHBLOCK_FAIL_THRES 5 // 5
+#define REGBLOCK_FAIL_THRES 500000 // 5
+#define REGBLOCK_SUCC_THRES 100000 // 1
+#define AUTHBLOCK_FAIL_THRES 500000 // 5
 
 #define REGBLOCK_EXPIRY 7200 // 2 h
 #define AUTHBLOCK_EXPIRY 3600 // 1 h
@@ -35,29 +35,35 @@ enum record_reason
     RSN_REGSUCC
 };
 
+typedef struct generic_ip_rec
+{
+    in_addr_t ip_addr;
+    node nd;
+}generic_ip_rec;
+
 typedef struct reg_ipb_rec
 {
+    in_addr_t ip_addr;
     node nd;
     struct timespec timestamp;
-    in_addr_t ip_addr;
-    uint8_t succ_regs;
-    uint8_t* failed_regs;
+    uint32_t succ_regs;
+    uint32_t failed_regs;
     const bool is_manual;
 }reg_ipb_rec;
 
 typedef struct std_ipb_rec
 {
+    in_addr_t ip_addr;
     node nd;
     struct timespec timestamp;
-    in_addr_t ip_addr;
-    ATOMIC uint8_t failed_auths;
+    ATOMIC uint32_t failed_auths;
     const bool is_manual;
 }std_ipb_rec;
 
 typedef struct whitelist_rec
 {
-    node nd;
     in_addr_t ip_addr;
+    node nd;
 }whitelist_rec;
 
 uint8_t chk_reg_block(reg_ipb_rec* ripbr);
@@ -71,6 +77,8 @@ whitelist_rec* whitelist_rec_create(in_addr_t peer_name);
 std_ipb_rec* std_ipb_rec_create(in_addr_t peer_name, bool is_manual);
 
 int32_t ip_cmp(const void* a, const void* b, uint32_t lena, uint32_t lenb);
+
+int32_t node_copy_peername(node* nd, void* buf, uint64_t buf_size);
 
 #endif //LWMSG_IPBLOCK_H
 

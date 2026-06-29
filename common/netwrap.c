@@ -21,6 +21,7 @@
 #endif
 
 #ifdef LWMSG_SERVER
+
 int32_t server_start_tcp(uint32_t be_inet4addr, uint16_t le_port, uint16_t backlog, bool nonblock, int32_t reuse_port)
 {
     int32_t sock = socket(AF_INET, SOCK_STREAM | (nonblock ? SOCK_NONBLOCK : 0), IPPROTO_TCP);

@@ -54,6 +54,8 @@ node* htable_get_cond(striped_htable* htable, const void* key, uint32_t len, boo
 
 uint64_t htable_copy_all_keys(striped_htable* htable, void** pkeybuf, int32_t(*copy_fn)(node* nd, void* buf, uint64_t bufsize));
 
+double htable_get_ldfactor(striped_htable* htable);
+
 void node_get(node* n);
 
 void node_put(node* n);

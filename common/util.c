@@ -9,5 +9,5 @@
 void normalize_string(char* str)
 {
     for (uint32_t i = 0; i < strlen(str); i++)
-        str[i] = (char)tolower(str[i]);
+        str[i] = (char)tolower((unsigned char)str[i]);
 }

@@ -6,8 +6,12 @@
 #include <string.h>
 #include "ipblock.h"
 
+#include <errno.h>
+#include <arpa/inet.h>
+
 #include "cltimerheap.h"
 #include "xalloc.h"
+#include "zlog.h"
 
 static void ripbr_free(node* nd)
 {
@@ -130,4 +134,26 @@ whitelist_rec* whitelist_rec_create(in_addr_t peer_name)
     memcpy(rec, &temp, sizeof(whitelist_rec));
     rec->nd.key = &rec->ip_addr;
     return rec;
+}
+
+int32_t node_copy_peername(node* nd, void* buf, uint64_t buf_size)
+{
+    generic_ip_rec* rec = container_of(generic_ip_rec, nd, nd);
+    struct in_addr ina = {.s_addr = rec->ip_addr};
+    socklen_t slen = (socklen_t)buf_size;
+    const char* res = inet_ntop(AF_INET, &ina, buf, slen);
+    if (!res)
+    {
+        int32_t err = errno;
+        if (err == ENOSPC)
+            return BUF_TOOSMALL;
+
+        char errbuf[256];
+        strerror_r(err, errbuf, 256);
+        dzlog_error("Error copying peer name. Cause: %s", errbuf);
+        return KEY_SKIP;
+    }
+
+    int32_t peername_len = (int32_t)strlen(res) + 1;
+    return peername_len;
 }
