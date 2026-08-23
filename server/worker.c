@@ -23,6 +23,13 @@
 #define WORKER_BACKLOG 1024
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
+enum wt_inb_data_status
+{
+    WT_DCONN,
+    WT_STOP_EBLK,
+    WT_STOP_BORDER
+};
+
 typedef struct stdcl_containers
 {
     striped_htable* std_cl_table;
@@ -179,6 +186,7 @@ static void wt_handle_accepting(stdcl_containers* cont, worker_thrd_ctx* wt_ctx,
     else if (ares == ACCPT_DONE)
     {
         dzlog_debug("Peer %u.%u.%u.%u finished TLS handshake", IP4DOT(stdcl->cl.peer_name));
+        cl_timerheap_add(cont->clth, &stdcl->cl, CLTH_AUTH_MAXPERM_TIME);
         __atomic_store_n(&stdcl->cl.cl_state, ACCEPTED, __ATOMIC_SEQ_CST);
     }
 
@@ -238,6 +246,8 @@ static void wt_handle_authentication(worker_thrd_ctx* wt_ctx, stdcl_containers* 
             bool res = htable_add(wt_ctx->std_ipblock_tbl, &std_ipbr->nd);
             if (!res)
                 std_ipbr->nd.free_fn(&std_ipbr->nd);
+            else
+                dzlog_info("Created std_ipblock record for peer %u.%u.%u.%u", IP4DOT(stdcl->cl.peer_name));
         }
 
         auth_send_resp(&stdcl->cl, nfn, resp_code);
@@ -323,10 +333,10 @@ static uint64_t handle_request(lwmp_pdu* pdu, stdcl_containers* cont, void** req
     }
 }
 
-static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, struct epoll_event* ev_cl, int32_t epollfd)
+static uint8_t wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, struct epoll_event* ev_cl, int32_t epollfd)
 {
     if (__atomic_load_n(&stdcl->cl.cl_state, __ATOMIC_SEQ_CST) == DISCONNECTED)
-        return false;
+        return WT_DCONN;
 
     curr_recv_msg* tmp_rcv_st = &stdcl->cl.temp_recv_storage;
     buffer* recvbuf = &tmp_rcv_st->recvbuf;
@@ -341,7 +351,7 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
             if (recved_data == ERROR)
             {
                 cleanup_std_client(cont, &stdcl->nd, epollfd);
-                return true;
+                return WT_DCONN;
             }
             else if (recved_data == EBLOCK)
                 break;
@@ -362,7 +372,7 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
         else
         {
             dzlog_info("Failed to resync client %s's data stream.", stdcl->username);
-            return true;
+            return WT_STOP_EBLK;
         }
     }
 
@@ -376,11 +386,11 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
             if (recved_data == ERROR)
             {
                 cleanup_std_client(cont, &stdcl->nd, epollfd);
-                return false;
+                return WT_DCONN;
             }
 
             if (recved_data == EBLOCK)
-                return true;
+                return WT_STOP_EBLK;
 
             recvbuf->buf_data_offset += recved_data;
         }
@@ -409,10 +419,10 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
             if (recved_data == ERROR)
             {
                 cleanup_std_client(cont, &stdcl->nd, epollfd);
-                return false;
+                return WT_DCONN;
             }
             else if (recved_data == EBLOCK)
-                return true;
+                return WT_STOP_EBLK;
 
             recvbuf->buf_data_offset += recved_data;
             tmp_rcv_st->total_msg_data_recved += recved_data;
@@ -438,7 +448,9 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
                 uint64_t offset = offsetof(curr_recv_msg, expected_msg_size);
                 memset((void*)tmp_rcv_st + offset, 0, sizeof(curr_recv_msg) - offset);
                 recvbuf->buf_data_offset = 0;
-                return true;
+                if (hdr_val_res == HV_CRCERR)
+                    tmp_rcv_st->is_desynced = true;
+                return WT_STOP_BORDER;
             }
 
             if (tmp_rcv_st->msg_type == MT_REQ)
@@ -480,7 +492,7 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
                     uint64_t offset = offsetof(curr_recv_msg, expected_msg_size);
                     memset((void*)tmp_rcv_st + offset, 0, sizeof(curr_recv_msg) - offset);
                     recvbuf->buf_data_offset = 0;
-                    return true;
+                    return WT_STOP_EBLK;
                 }
                 msg = msg_node_create(recvbuf->buf, recvbuf->buf_data_offset, stdcl->username);
                 strncpy(((lwmp_pdu*)msg->buf)->subject_uname, stdcl->username, UNAMESIZE);
@@ -500,7 +512,7 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
             else
                 tmp_rcv_st->not_msg_init_pdu = true;
         }
-        return true;
+        return WT_STOP_BORDER;
     }
 
 
@@ -512,10 +524,10 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
         if (recved_data == ERROR)
         {
             cleanup_std_client(cont, &stdcl->nd, epollfd);
-            return false;
+            return WT_DCONN;
         }
         else if (recved_data == EBLOCK)
-            return true;
+            return WT_STOP_EBLK;
 
         recvbuf->buf_data_offset += recved_data;
         tmp_rcv_st->total_msg_data_recved += recved_data;
@@ -534,7 +546,7 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
         memset((void*)tmp_rcv_st + offset, 0, sizeof(curr_recv_msg) - offset);
         recvbuf->buf_data_offset = 0;
         tmp_rcv_st->is_desynced = true;
-        return true;
+        return WT_STOP_EBLK;
     }
 
     std_client* rcpt = container_of(std_client, nd, rcpt_node);
@@ -551,7 +563,7 @@ static bool wt_handle_inbound_data(std_client* stdcl, stdcl_containers* cont, st
         recvbuf->buf_data_offset = 0;
     }
 
-    return true;
+    return WT_STOP_BORDER;
 }
 
 static int64_t send_one_msg(stdcl_containers* cont, std_client* stdcl, int32_t epollfd)
@@ -727,7 +739,7 @@ static void wt_handle_clientevent(worker_thrd_ctx* wt_ctx, stdcl_containers* con
 
 
     uint8_t clstate = __atomic_load_n(&stdcl->cl.cl_state, __ATOMIC_SEQ_CST);
-    bool not_disconnected = true;
+    uint8_t wt_ibd_st = WT_STOP_BORDER;
 
     if (ev_cl->events & EPOLLIN)
     {
@@ -743,11 +755,11 @@ static void wt_handle_clientevent(worker_thrd_ctx* wt_ctx, stdcl_containers* con
         }
         else if (clstate == AUTHENTICATED)
         {
-            not_disconnected = wt_handle_inbound_data(stdcl, cont, ev_cl, epollfd);
-        }
+            while ((wt_ibd_st = wt_handle_inbound_data(stdcl, cont, ev_cl, epollfd)) == WT_STOP_BORDER);
+        } 
     }
 
-    if (ev_cl->events & EPOLLOUT && not_disconnected)
+    if (ev_cl->events & EPOLLOUT && wt_ibd_st != WT_DCONN)
     {
         wt_handle_outbound_data(stdcl, cont, ev_cl, epollfd);
     }
