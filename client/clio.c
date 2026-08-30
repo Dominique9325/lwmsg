@@ -19,7 +19,7 @@ static int g_in_handler;
 static char g_prompt[PROMPT_MAX] = DEFAULT_PROMPT;
 
 static const char* const commands[] = {
-    "connect", "register", "disconnect", "msg", "sendfile",
+    "connect", "register", "delete_account", "disconnect", "msg", "sendfile",
     "userlist", "clear", "help", "quit", "q", NULL
 };
 
@@ -118,7 +118,8 @@ static char** lwmsg_completion(const char* text, int start, int end)
     if (strcmp(first, "help") == 0 && widx == 1)
         return rl_completion_matches(text, command_generator);
 
-    if ((strcmp(first, "connect") == 0 || strcmp(first, "register") == 0) && widx == 1)
+    if ((strcmp(first, "connect") == 0 || strcmp(first, "register") == 0 ||
+            strcmp(first, "delete_account") == 0) && widx == 1)
         return rl_completion_matches(text, defaulthost_generator);
 
     if ((strcmp(first, "msg") == 0 || strcmp(first, "sendfile") == 0) && widx == 1)

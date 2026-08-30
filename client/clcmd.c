@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <endian.h>
 #include <netinet/in.h>
+#include "lwmp.h"
 #include "util.h"
 
 #define DEFAULT_HOST "lwmsg.duckdns.org"
@@ -35,7 +36,7 @@ static bool parse_target(char** tokens, int32_t ntokens, uint16_t default_port, 
 
     if (ntokens < 5) return false;
     int32_t p = atoi(tokens[2]);
-    if (p <= 0 || p > 65535) return false;
+    if (p <= 0 || p > UINT16_MAX) return false;
     *host = tokens[1];
     *port = (uint16_t)p;
     *username = tokens[3];
@@ -147,6 +148,44 @@ static void cmd_register(client_ctx* ctx, char** tokens, int32_t ntokens)
 
     if (res == 0)
         clio_print("Registration successful.\n");
+}
+
+static void cmd_delete_account(client_ctx* ctx, char** tokens, int32_t ntokens)
+{
+    const char* host;
+    uint16_t port;
+    const char* username;
+    const char* password;
+    if (!parse_target(tokens, ntokens, DEFAULT_PORT_REGISTER, &host, &port, &username, &password))
+    {
+        clio_print("Usage: delete_account <host> <port> <username> <password>\n"
+                   "   or: delete_account defaulthost <username> <password>\n");
+        return;
+    }
+
+    uint32_t addr;
+    if (resolve_host(host, &addr) < 0) return;
+
+    conn c = {.sock_fd = ERROR, .ssl = NULL};
+    net_fns nfns;
+
+    if (ctx->use_tls)
+        load_tls_fns(&nfns);
+    else
+        load_tcp_fns(&nfns);
+
+    clio_print("Connecting to %s:%u for account deletion...\n", host, port);
+    if (nfns.connect_fn(&c, ctx->ssl_ctx, addr, port) < 0)
+    {
+        clio_print("Connection failed.\n");
+        return;
+    }
+
+    int32_t res = do_auth(&c, &nfns, REQ_DELETION, username, password);
+    nfns.disconnect_fn(&c);
+
+    if (res == 0)
+        clio_print("Successfully deleted account.\n");
 }
 
 static void cmd_disconnect(client_ctx* ctx)
@@ -382,6 +421,9 @@ static const help_entry help_table[] = {
     {"register",   "Register a new account on a server.",
                    "register <host> <port> <username> <password>\n"
                    "     or: register defaulthost <username> <password>"},
+    {"delete_account", "Delete an existing account on a server.",
+                       "delete_account <host> <port> <username> <password>\n"
+                       "     or: delete_account defaulthost <username> <password>"},
     {"disconnect", "Disconnect from the current server.",
                    "disconnect"},
     {"msg",        "Send a text message to a user.",
@@ -446,6 +488,8 @@ void handle_command_line(client_ctx* ctx, char* line)
         cmd_register(ctx, tokens, ntokens);
     else if (strcmp(tokens[0], "disconnect") == 0)
         cmd_disconnect(ctx);
+    else if (strcmp(tokens[0], "delete_account") == 0)
+        cmd_delete_account(ctx, tokens, ntokens);
     else if (strcmp(tokens[0], "quit") == 0 || strcmp(tokens[0], "q") == 0)
         ctx->running = false;
     else if (strcmp(tokens[0], "msg") == 0)

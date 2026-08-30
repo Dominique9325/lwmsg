@@ -90,7 +90,6 @@ int main(int argc, char** argv)
     }
 
     clio_shutdown();
-
     close_all_transfers(&ctx);
     if (ctx.state == ST_CONNECTED)
     {
@@ -99,7 +98,6 @@ int main(int argc, char** argv)
     }
     close(ctx.epoll_fd);
     if (ctx.ssl_ctx) SSL_CTX_free(ctx.ssl_ctx);
-
-    printf("Exiting.\n");
+    printf("\nExiting.\n");
     return 0;
 }
