@@ -10,10 +10,12 @@
 #include <inttypes.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <endian.h>
 #include <netinet/in.h>
+#include <readline/tilde.h>
 #include "lwmp.h"
 #include "util.h"
 
@@ -274,13 +276,37 @@ static void cmd_sendfile(client_ctx* ctx, char** tokens, int32_t ntokens)
     normalize_string(recipient);
 
     const char* filepath = tokens[2];
-    FILE* f = fopen(filepath, "rb");
-    if (!f)
+    const char* sanitized_filepath = strrchr(filepath, '/');
+    if (!sanitized_filepath)
+        sanitized_filepath = filepath;
+    else
+        sanitized_filepath++;
+
+    char* expanded_filepath = tilde_expand_word(filepath);
+    int32_t fraw = open(expanded_filepath, O_RDONLY | O_NONBLOCK);
+    if (fraw == ERROR)
     {
         clio_print("Cannot open file: %s\n", strerror(errno));
+        free(expanded_filepath);
         return;
     }
 
+    struct stat st;
+    if (fstat(fraw, &st) || !S_ISREG(st.st_mode))
+    {
+        clio_print("Cannot send %s: Not a file.\n", filepath);
+        free(expanded_filepath);
+        close(fraw);
+        return;
+    }
+    free(expanded_filepath);
+    FILE* f = fdopen(fraw, "rb");
+    if (!f)
+    {
+        clio_print("Error opening file: %s\n", strerror(errno));
+        close(fraw);
+        return;
+    }
     fseek(f, 0, SEEK_END);
     int64_t file_size = (int64_t)ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -290,13 +316,12 @@ static void cmd_sendfile(client_ctx* ctx, char** tokens, int32_t ntokens)
         fclose(f);
         return;
     }
-
     lwmp_pdu pdu = {0};
     pdu.hdr_mark = htonl(PDU_SYNC_HDR_MARK);
     pdu.msg_type = MT_FILE;
     strncpy(pdu.subject_uname, recipient, UNAMESIZE);
     pdu.total_msg_size = htobe64((uint64_t)file_size);
-    strncpy(pdu.file_metadata.buf, filepath, OPTDATA_LEN - 1);
+    strncpy(pdu.file_metadata.buf, sanitized_filepath, OPTDATA_LEN - 1);
 
     uint64_t first_chunk = (uint64_t)file_size < LWMP_PDU_BUF_SIZE ? (uint64_t)file_size : LWMP_PDU_BUF_SIZE;
     if (fread(pdu.buf, 1, first_chunk, f) != first_chunk)
@@ -318,7 +343,7 @@ static void cmd_sendfile(client_ctx* ctx, char** tokens, int32_t ntokens)
     if (!multi)
     {
         fclose(f);
-        clio_print("File %s (%" PRId64 " bytes) sent to %s.\n", filepath, file_size, recipient);
+        clio_print("File %s (%" PRId64 " bytes) sent to %s.\n", sanitized_filepath, file_size, recipient);
         return;
     }
 
@@ -380,7 +405,7 @@ static void cmd_sendfile(client_ctx* ctx, char** tokens, int32_t ntokens)
     if (aborted)
         clio_print("File transfer to %s aborted.\n", recipient);
     else
-        clio_print("File %s (%" PRId64 " bytes) sent to %s.\n", filepath, file_size, recipient);
+        clio_print("File %s (%" PRId64 " bytes) sent to %s.\n", sanitized_filepath, file_size, recipient);
 }
 
 static void cmd_clear(void)
